@@ -1,0 +1,10 @@
+# Nice Logger 88361 PC 應用程式
+# 用途: 在 PC (WSL/Linux/Pi 4) 連線 AZ Instrument 88361 BLE 雙溫度記錄器
+# 提供: FastAPI HTTP/WebSocket server + 瀏覽器 UI
+
+fastapi>=0.115
+uvicorn[standard]>=0.32
+pydantic>=2.0
+bleak>=0.21
+dbus-fast>=1.0
+pyqt6>=6.6

@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environment
+.venv/
+venv/
+env/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets / 敏感資料 — 絕對不進 git
+*.pem
+*.key
+*.pub
+secrets/
+.env
+.env.*
+
+# 測試 / log
+*.log
+.pytest_cache/
+.coverage
+htmlcov/
+
+# BLE capture / 動態測試輸出
+/captures/
+/pcaps/
+*.pcap

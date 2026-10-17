@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<title>Nice Logger 88361</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif; margin: 0; background: #0f1419; color: #e6e6e6; }
+  header { background: #1a1f2e; padding: 1rem 1.5rem; border-bottom: 1px solid #2a3142; display: flex; align-items: center; gap: 1rem; }
+  header h1 { margin: 0; font-size: 1.2rem; font-weight: 600; }
+  .status { display: inline-block; padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.8rem; font-weight: 600; }
+  .status.connected { background: #1a3a1a; color: #6ee06e; }
+  .status.disconnected { background: #3a1a1a; color: #e06e6e; }
+  main { padding: 1.5rem; max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+  @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
+  .card { background: #1a1f2e; border: 1px solid #2a3142; border-radius: 8px; padding: 1.2rem; }
+  .card h2 { margin: 0 0 0.8rem 0; font-size: 1rem; color: #8a96b0; font-weight: 600; }
+  .live-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 0.5rem 0; }
+  .temp { background: #0f1419; padding: 1rem; border-radius: 6px; text-align: center; }
+  .temp .label { font-size: 0.75rem; color: #6a768a; }
+  .temp .value { font-size: 2.2rem; font-weight: 700; color: #4ec9d0; margin: 0.3rem 0; font-family: 'Courier New', monospace; }
+  .temp .unit { font-size: 1rem; color: #6a768a; }
+  button { background: #2a4365; color: #fff; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; font-size: 0.9rem; }
+  button:hover { background: #3a5375; }
+  button:disabled { background: #2a3142; color: #6a768a; cursor: not-allowed; }
+  button.danger { background: #5a2a2a; }
+  button.danger:hover { background: #6a3a3a; }
+  button.success { background: #2a5a2a; }
+  button.success:hover { background: #3a6a3a; }
+  input, select { background: #0f1419; color: #e6e6e6; border: 1px solid #2a3142; padding: 0.4rem 0.6rem; border-radius: 4px; font-size: 0.9rem; width: 100%; }
+  label { display: block; font-size: 0.8rem; color: #8a96b0; margin: 0.5rem 0 0.3rem; }
+  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; }
+  .device-list { max-height: 200px; overflow-y: auto; }
+  .device { padding: 0.5rem; border-bottom: 1px solid #2a3142; cursor: pointer; display: flex; justify-content: space-between; }
+  .device:hover { background: #0f1419; }
+  .device.selected { background: #2a4365; }
+  .rssi { color: #6a768a; font-size: 0.8rem; }
+  .packet-log { background: #0a0e14; border: 1px solid #2a3142; border-radius: 4px; padding: 0.5rem; height: 200px; overflow-y: auto; font-family: 'Courier New', monospace; font-size: 0.8rem; }
+  .packet { display: grid; grid-template-columns: 80px 30px 1fr; gap: 0.5rem; padding: 0.1rem 0; }
+  .packet .tx { color: #6ee06e; }
+  .packet .rx { color: #4ec9d0; }
+  .packet .time { color: #6a768a; }
+  .btn-row { display: flex; gap: 0.5rem; margin: 0.5rem 0; flex-wrap: wrap; }
+  .footer { padding: 1rem 1.5rem; text-align: center; color: #6a768a; font-size: 0.8rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🌡️ Nice Logger 88361</h1>
+  <span id="status" class="status disconnected">未連線</span>
+  <span id="ws-status" style="margin-left: auto; font-size: 0.8rem; color: #6a768a;">●</span>
+</header>
+
+<main>
+  <section class="card">
+    <h2>📡 設備掃描</h2>
+    <button onclick="scan()">🔍 掃描 (10s)</button>
+    <div class="device-list" id="devices"></div>
+    <div class="btn-row" id="connect-row" style="display:none;">
+      <button onclick="connectSelected()" class="success">連線</button>
+      <button onclick="disconnect()" class="danger">斷線</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>🌡️ 即時溫度</h2>
+    <div class="live-grid">
+      <div class="temp">
+        <div class="label">T1 環境</div>
+        <div class="value" id="temp-t1">--.-</div>
+        <div class="unit">°C</div>
+      </div>
+      <div class="temp">
+        <div class="label">T2 外接</div>
+        <div class="value" id="temp-t2">--.-</div>
+        <div class="unit">°C</div>
+      </div>
+    </div>
+    <div class="btn-row">
+      <button onclick="readLive()">📊 讀取即時</button>
+      <button onclick="startLog()" class="success">▶ 開始記錄</button>
+      <button onclick="stopLog()" class="danger">⏹ 停止</button>
+      <button onclick="readout()">📥 下載記錄</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>⚙️ 設定</h2>
+    <div class="form-row">
+      <div>
+        <label>設備名稱 (最多 7 字)</label>
+        <input id="cfg-name" maxlength="7">
+      </div>
+      <div>
+        <label>密碼 (0-9999)</label>
+        <input id="cfg-pwd" type="number" min="0" max="9999">
+      </div>
+    </div>
+    <div class="form-row">
+      <div>
+        <label>取樣率 (秒, 10~7200)</label>
+        <input id="cfg-rate" type="number" min="10" max="7200" step="10" value="60">
+      </div>
+      <div>
+        <label>啟動延遲 (分鐘, 0~1440, 10 增量)</label>
+        <input id="cfg-delay" type="number" min="0" max="1440" step="10" value="0">
+      </div>
+    </div>
+    <div class="form-row">
+      <div>
+        <label>警報高溫 (°C)</label>
+        <input id="cfg-alarm-hi" type="number" step="0.1" value="30">
+      </div>
+      <div>
+        <label>警報低溫 (°C)</label>
+        <input id="cfg-alarm-lo" type="number" step="0.1" value="5">
+      </div>
+    </div>
+    <div class="form-row">
+      <div>
+        <label>警報延遲 (分鐘, 0~720, 5 增量)</label>
+        <input id="cfg-alarm-d" type="number" min="0" max="720" step="5" value="0">
+      </div>
+      <div>
+        <label>警報類型 (0=off, 1=single, 2=cumulative)</label>
+        <input id="cfg-alarm-t" type="number" min="0" max="2" value="1">
+      </div>
+    </div>
+    <div class="btn-row">
+      <button onclick="applyConfig()" class="success">💾 套用設定</button>
+      <button onclick="getConfig()">📥 讀取設定</button>
+    </div>
+  </section>
+
+  <section class="card" style="grid-column: 1 / -1;">
+    <h2>📋 封包記錄 (debug)</h2>
+    <div class="packet-log" id="packets"></div>
+  </section>
+</main>
+
+<div class="footer">
+  AZ Instrument 88361 BLE 雙溫度記錄器 — PC 控制程式
+  <br>
+  <small>opcode 為推測值, 動態驗證後會自動更新</small>
+</div>
+
+<script>
+let ws = null;
+let selectedAddr = null;
+
+function $(id) { return document.getElementById(id); }
+
+function connectWs() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}/ws`);
+  ws.onopen = () => { $('ws-status').textContent = '● WebSocket 已連'; $('ws-status').style.color = '#6ee06e'; };
+  ws.onclose = () => { $('ws-status').textContent = '● WebSocket 斷線'; $('ws-status').style.color = '#e06e6e'; setTimeout(connectWs, 2000); };
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.event === 'snapshot') updateSnapshot(msg.data);
+    else if (msg.event === 'scan_done') renderDevices(msg.data);
+    else if (msg.event === 'connected') { $('status').textContent = `已連線: ${msg.data}`; $('status').className = 'status connected'; }
+    else if (msg.event === 'disconnected') { $('status').textContent = '未連線'; $('status').className = 'status disconnected'; }
+    else if (msg.event === 'live' && msg.data) {
+      $('temp-t1').textContent = msg.data.temp_t1.toFixed(1);
+      $('temp-t2').textContent = msg.data.temp_t2.toFixed(1);
+    }
+  };
+}
+
+function updateSnapshot(d) {
+  if (d.connected) { $('status').textContent = `已連線: ${d.connected}`; $('status').className = 'status connected'; }
+  if (d.devices) renderDevices(d.devices);
+  if (d.live) { $('temp-t1').textContent = d.live.temp_t1.toFixed(1); $('temp-t2').textContent = d.live.temp_t2.toFixed(1); }
+}
+
+async function scan() {
+  const btn = event.target; btn.disabled = true; btn.textContent = '掃描中...';
+  try {
+    const r = await fetch('/api/scan', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({timeout: 10}) });
+    const d = await r.json();
+    renderDevices(d.devices);
+  } finally {
+    btn.disabled = false; btn.textContent = '🔍 掃描 (10s)';
+  }
+}
+
+function renderDevices(devices) {
+  const el = $('devices');
+  el.innerHTML = '';
+  if (!devices || !devices.length) { el.innerHTML = '<div style="padding:1rem; color:#6a768a;">無設備</div>'; return; }
+  devices.forEach(d => {
+    const div = document.createElement('div');
+    div.className = 'device' + (d.address === selectedAddr ? ' selected' : '');
+    div.onclick = () => { selectedAddr = d.address; document.querySelectorAll('.device').forEach(x => x.classList.remove('selected')); div.classList.add('selected'); $('connect-row').style.display = 'flex'; };
+    div.innerHTML = `<div><strong>${d.name || '(未命名)'}</strong><br><small>${d.address}</small></div><div class="rssi">${d.rssi} dBm</div>`;
+    el.appendChild(div);
+  });
+}
+
+async function connectSelected() {
+  if (!selectedAddr) return;
+  await fetch('/api/connect', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({address: selectedAddr}) });
+}
+
+async function disconnect() {
+  await fetch('/api/disconnect', { method: 'POST' });
+}
+
+async function readLive() {
+  const r = await fetch('/api/live');
+  const d = await r.json();
+  if (d.live) { $('temp-t1').textContent = d.live.temp_t1.toFixed(1); $('temp-t2').textContent = d.live.temp_t2.toFixed(1); }
+  await loadPackets();
+}
+
+async function startLog() { await fetch('/api/log/start', { method: 'POST' }); await loadPackets(); }
+async function stopLog() { await fetch('/api/log/stop', { method: 'POST' }); await loadPackets(); }
+async function readout() { await fetch('/api/log/readout', { method: 'POST' }); await loadPackets(); }
+
+async function getConfig() {
+  await fetch('/api/config');
+  await loadPackets();
+}
+
+async function applyConfig() {
+  const body = {
+    device_name: $('cfg-name').value || null,
+    password: parseInt($('cfg-pwd').value) || null,
+    sampling_rate_seconds: parseInt($('cfg-rate').value) || null,
+    start_delay_minutes: parseInt($('cfg-delay').value) || null,
+    alarm_delay_minutes: parseInt($('cfg-alarm-d').value) || null,
+    alarm_high_c: parseFloat($('cfg-alarm-hi').value) || null,
+    alarm_low_c: parseFloat($('cfg-alarm-lo').value) || null,
+    alarm_type: parseInt($('cfg-alarm-t').value) || null,
+  };
+  Object.keys(body).forEach(k => body[k] === null && delete body[k]);
+  await fetch('/api/config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  await loadPackets();
+}
+
+async function loadPackets() {
+  const r = await fetch('/api/packets?limit=30');
+  const d = await r.json();
+  const el = $('packets');
+  el.innerHTML = d.packets.map(p => `<div class="packet"><span class="time">${p.time.split('T')[1]}</span><span class="${p.dir.toLowerCase()}">${p.dir}</span><span>${p.hex}</span></div>`).join('');
+  el.scrollTop = el.scrollHeight;
+}
+
+setInterval(loadPackets, 3000);
+connectWs();
+loadPackets();
+</script>
+</body>
+</html>
