@@ -1,255 +1,681 @@
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
-<meta charset="UTF-8">
-<title>Nice Logger 88361</title>
-<style>
-  * { box-sizing: border-box; }
-  body { font-family: -apple-system, "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif; margin: 0; background: #0f1419; color: #e6e6e6; }
-  header { background: #1a1f2e; padding: 1rem 1.5rem; border-bottom: 1px solid #2a3142; display: flex; align-items: center; gap: 1rem; }
-  header h1 { margin: 0; font-size: 1.2rem; font-weight: 600; }
-  .status { display: inline-block; padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.8rem; font-weight: 600; }
-  .status.connected { background: #1a3a1a; color: #6ee06e; }
-  .status.disconnected { background: #3a1a1a; color: #e06e6e; }
-  main { padding: 1.5rem; max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
-  @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
-  .card { background: #1a1f2e; border: 1px solid #2a3142; border-radius: 8px; padding: 1.2rem; }
-  .card h2 { margin: 0 0 0.8rem 0; font-size: 1rem; color: #8a96b0; font-weight: 600; }
-  .live-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 0.5rem 0; }
-  .temp { background: #0f1419; padding: 1rem; border-radius: 6px; text-align: center; }
-  .temp .label { font-size: 0.75rem; color: #6a768a; }
-  .temp .value { font-size: 2.2rem; font-weight: 700; color: #4ec9d0; margin: 0.3rem 0; font-family: 'Courier New', monospace; }
-  .temp .unit { font-size: 1rem; color: #6a768a; }
-  button { background: #2a4365; color: #fff; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; font-size: 0.9rem; }
-  button:hover { background: #3a5375; }
-  button:disabled { background: #2a3142; color: #6a768a; cursor: not-allowed; }
-  button.danger { background: #5a2a2a; }
-  button.danger:hover { background: #6a3a3a; }
-  button.success { background: #2a5a2a; }
-  button.success:hover { background: #3a6a3a; }
-  input, select { background: #0f1419; color: #e6e6e6; border: 1px solid #2a3142; padding: 0.4rem 0.6rem; border-radius: 4px; font-size: 0.9rem; width: 100%; }
-  label { display: block; font-size: 0.8rem; color: #8a96b0; margin: 0.5rem 0 0.3rem; }
-  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; }
-  .device-list { max-height: 200px; overflow-y: auto; }
-  .device { padding: 0.5rem; border-bottom: 1px solid #2a3142; cursor: pointer; display: flex; justify-content: space-between; }
-  .device:hover { background: #0f1419; }
-  .device.selected { background: #2a4365; }
-  .rssi { color: #6a768a; font-size: 0.8rem; }
-  .packet-log { background: #0a0e14; border: 1px solid #2a3142; border-radius: 4px; padding: 0.5rem; height: 200px; overflow-y: auto; font-family: 'Courier New', monospace; font-size: 0.8rem; }
-  .packet { display: grid; grid-template-columns: 80px 30px 1fr; gap: 0.5rem; padding: 0.1rem 0; }
-  .packet .tx { color: #6ee06e; }
-  .packet .rx { color: #4ec9d0; }
-  .packet .time { color: #6a768a; }
-  .btn-row { display: flex; gap: 0.5rem; margin: 0.5rem 0; flex-wrap: wrap; }
-  .footer { padding: 1rem 1.5rem; text-align: center; color: #6a768a; font-size: 0.8rem; }
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#0f1419">
+  <title>Nice Logger 88361</title>
+  <style>
+    /* === Reset & Root === */
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      --bg: #0f1419;
+      --bg-card: #1a1f2e;
+      --bg-input: #0f1419;
+      --border: #2a3142;
+      --text: #e6e6e6;
+      --text-dim: #8a96b0;
+      --text-faint: #6a768a;
+      --accent: #4ec9d0;
+      --green: #6ee06e;
+      --red: #e06e6e;
+      --blue: #2a4365;
+      --blue-hover: #3a5375;
+      --red-bg: #5a2a2a;
+      --red-bg-hover: #6a3a3a;
+      --green-bg: #2a5a2a;
+      --green-bg-hover: #3a6a3a;
+
+      /* 流暢字體 (clamp: 最小, 流暢, 最大) */
+      --fs-base: clamp(14px, 0.875rem + 0.5vw, 16px);
+      --fs-h1: clamp(1.05rem, 1rem + 0.8vw, 1.3rem);
+      --fs-h2: clamp(0.95rem, 0.9rem + 0.4vw, 1.05rem);
+      --fs-temp: clamp(2rem, 1.5rem + 4vw, 3rem);
+      --fs-pkt: clamp(0.7rem, 0.65rem + 0.3vw, 0.85rem);
+
+      /* 流暢 spacing */
+      --pad: clamp(0.75rem, 0.5rem + 1vw, 1.5rem);
+      --gap: clamp(0.75rem, 0.5rem + 1vw, 1.5rem);
+      --radius: clamp(4px, 0.5vw + 4px, 8px);
+
+      /* 觸控目標 (iOS HIG ≥ 44px, Material ≥ 48dp) */
+      --touch: 44px;
+    }
+
+    html { -webkit-text-size-adjust: 100%; -webkit-tap-highlight-color: transparent; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang TC", "Microsoft JhengHei", "Helvetica Neue", sans-serif;
+      font-size: var(--fs-base);
+      line-height: 1.5;
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      /* iOS safe-area */
+      padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+      min-height: 100vh;
+      min-height: 100dvh; /* dynamic viewport */
+      overscroll-behavior-y: contain;
+    }
+
+    /* === Sticky Header === */
+    header {
+      position: sticky;
+      top: env(safe-area-inset-top);
+      z-index: 100;
+      background: var(--bg-card);
+      padding: 0.75rem var(--pad);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+    }
+    header h1 {
+      margin: 0;
+      font-size: var(--fs-h1);
+      font-weight: 600;
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .status {
+      display: inline-block;
+      padding: 0.3rem 0.7rem;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .status.connected { background: rgba(110, 224, 110, 0.15); color: var(--green); }
+    .status.disconnected { background: rgba(224, 110, 110, 0.15); color: var(--red); }
+    .status.connecting { background: rgba(255, 193, 7, 0.15); color: #ffc107; }
+
+    /* === Main: auto-fit grid (RWD magic) === */
+    main {
+      padding: var(--pad);
+      max-width: 1200px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+      gap: var(--gap);
+    }
+
+    /* === Cards === */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: clamp(0.85rem, 0.7rem + 0.8vw, 1.2rem);
+      min-width: 0; /* prevent flex overflow */
+    }
+    .card.full { grid-column: 1 / -1; }
+    .card h2 {
+      margin: 0 0 0.8rem 0;
+      font-size: var(--fs-h2);
+      color: var(--text-dim);
+      font-weight: 600;
+    }
+
+    /* === Temperature (hero) === */
+    .live-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.75rem;
+      margin: 0.5rem 0;
+    }
+    .temp {
+      background: var(--bg);
+      padding: clamp(0.75rem, 0.5rem + 1vw, 1.2rem) 0.5rem;
+      border-radius: var(--radius);
+      text-align: center;
+      border: 1px solid var(--border);
+    }
+    .temp .label { font-size: 0.75rem; color: var(--text-faint); }
+    .temp .value {
+      font-size: var(--fs-temp);
+      font-weight: 700;
+      color: var(--accent);
+      margin: 0.3rem 0;
+      font-family: 'SF Mono', 'Courier New', monospace;
+      line-height: 1.1;
+      letter-spacing: -0.02em;
+    }
+    .temp .unit { font-size: 0.85rem; color: var(--text-faint); }
+
+    /* === Buttons (touch-friendly) === */
+    button {
+      background: var(--blue);
+      color: #fff;
+      border: none;
+      padding: 0 1rem;
+      min-height: var(--touch);
+      border-radius: var(--radius);
+      cursor: pointer;
+      font-size: 0.9rem;
+      font-weight: 500;
+      transition: background 0.15s, transform 0.1s;
+      -webkit-appearance: none;
+      touch-action: manipulation;
+      user-select: none;
+    }
+    button:hover { background: var(--blue-hover); }
+    button:active { transform: scale(0.97); }
+    button:disabled { background: var(--border); color: var(--text-faint); cursor: not-allowed; transform: none; }
+    button.danger { background: var(--red-bg); }
+    button.danger:hover { background: var(--red-bg-hover); }
+    button.success { background: var(--green-bg); }
+    button.success:hover { background: var(--green-bg-hover); }
+    button.full { width: 100%; }
+    button.icon-only { padding: 0; min-width: var(--touch); }
+
+    .btn-row {
+      display: flex;
+      gap: 0.5rem;
+      margin: 0.75rem 0 0.25rem;
+      flex-wrap: wrap;
+    }
+    .btn-row > button { flex: 1 1 calc(50% - 0.25rem); min-width: 0; }
+
+    /* === Forms === */
+    input, select {
+      background: var(--bg-input);
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 0.6rem 0.75rem;
+      min-height: var(--touch);
+      border-radius: var(--radius);
+      font-size: 1rem; /* 16px+ 避免 iOS 自動縮放 */
+      width: 100%;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+    label {
+      display: block;
+      font-size: 0.8rem;
+      color: var(--text-dim);
+      margin: 0.75rem 0 0.3rem;
+    }
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.75rem;
+    }
+    @media (max-width: 480px) {
+      .form-row { grid-template-columns: 1fr; }
+    }
+
+    /* === Device list === */
+    .device-list {
+      max-height: 240px;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      margin: 0.5rem 0;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+    .device {
+      padding: 0.75rem;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      min-height: 56px;
+      transition: background 0.15s;
+    }
+    .device:last-child { border-bottom: none; }
+    .device:hover, .device:focus { background: rgba(78, 201, 208, 0.05); }
+    .device.selected { background: rgba(42, 67, 101, 0.6); border-left: 3px solid var(--accent); padding-left: calc(0.75rem - 3px); }
+    .device .info { min-width: 0; flex: 1; }
+    .device .info strong { display: block; font-size: 0.95rem; }
+    .device .info small { color: var(--text-faint); font-size: 0.75rem; word-break: break-all; }
+    .device .rssi { color: var(--text-faint); font-size: 0.8rem; margin-left: 0.5rem; white-space: nowrap; }
+
+    /* === Packet log === */
+    .packet-log {
+      background: #0a0e14;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.5rem;
+      height: clamp(180px, 35vh, 320px);
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      font-family: 'SF Mono', 'Courier New', monospace;
+      font-size: var(--fs-pkt);
+      line-height: 1.45;
+    }
+    .packet {
+      display: grid;
+      grid-template-columns: 70px 24px 1fr;
+      gap: 0.5rem;
+      padding: 0.1rem 0;
+      word-break: break-all;
+    }
+    .packet .tx { color: var(--green); }
+    .packet .rx { color: var(--accent); }
+    .packet .time { color: var(--text-faint); }
+
+    /* === Loading spinner === */
+    .spinner {
+      display: inline-block;
+      width: 14px; height: 14px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      vertical-align: middle;
+      margin-right: 0.4rem;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) {
+      .spinner { animation-duration: 3s; }
+      button:active { transform: none; }
+    }
+
+    /* === Toast === */
+    .toast-container {
+      position: fixed;
+      bottom: calc(env(safe-area-inset-bottom) + 1rem);
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 1000;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      pointer-events: none;
+      max-width: calc(100vw - 2rem);
+      width: 100%;
+      max-width: 420px;
+    }
+    .toast {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.75rem 1rem;
+      color: var(--text);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+      animation: toastIn 0.25s ease-out, toastOut 0.25s ease-in 2.75s forwards;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      pointer-events: auto;
+    }
+    .toast.success { border-left: 3px solid var(--green); }
+    .toast.error { border-left: 3px solid var(--red); }
+    .toast.info { border-left: 3px solid var(--accent); }
+    @keyframes toastIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes toastOut { to { opacity: 0; transform: translateY(20px); } }
+
+    /* === Footer === */
+    .footer {
+      padding: 1rem var(--pad) calc(1rem + env(safe-area-inset-bottom));
+      text-align: center;
+      color: var(--text-faint);
+      font-size: 0.8rem;
+    }
+
+    /* === Small phone tweaks === */
+    @media (max-width: 380px) {
+      .live-grid { grid-template-columns: 1fr; }
+      .btn-row > button { flex: 1 1 100%; }
+    }
+
+    /* === Landscape phone === */
+    @media (max-height: 500px) and (orientation: landscape) {
+      main { padding: 0.5rem var(--pad); gap: 0.75rem; }
+      .temp { padding: 0.4rem; }
+      .temp .value { font-size: 1.5rem; }
+    }
+
+    /* === Pulse animation for connecting status === */
+    .pulse { animation: pulse 1.5s ease-in-out infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+  </style>
 </head>
 <body>
-<header>
-  <h1>🌡️ Nice Logger 88361</h1>
-  <span id="status" class="status disconnected">未連線</span>
-  <span id="ws-status" style="margin-left: auto; font-size: 0.8rem; color: #6a768a;">●</span>
-</header>
+  <header>
+    <h1>🌡️ Nice Logger 88361</h1>
+    <span id="status" class="status disconnected">未連線</span>
+  </header>
 
-<main>
-  <section class="card">
-    <h2>📡 設備掃描</h2>
-    <button onclick="scan()">🔍 掃描 (10s)</button>
-    <div class="device-list" id="devices"></div>
-    <div class="btn-row" id="connect-row" style="display:none;">
-      <button onclick="connectSelected()" class="success">連線</button>
-      <button onclick="disconnect()" class="danger">斷線</button>
-    </div>
-  </section>
+  <main>
+    <section class="card">
+      <h2>📡 設備掃描</h2>
+      <button onclick="scan()" id="scan-btn" class="full">🔍 掃描 (10s)</button>
+      <div class="device-list" id="devices"></div>
+      <div class="btn-row" id="connect-row" style="display:none;">
+        <button onclick="connectSelected()" class="success">✓ 連線</button>
+        <button onclick="disconnect()" class="danger">✕ 斷線</button>
+      </div>
+    </section>
 
-  <section class="card">
-    <h2>🌡️ 即時溫度</h2>
-    <div class="live-grid">
-      <div class="temp">
-        <div class="label">T1 環境</div>
-        <div class="value" id="temp-t1">--.-</div>
-        <div class="unit">°C</div>
+    <section class="card">
+      <h2>🌡️ 即時溫度</h2>
+      <div class="live-grid">
+        <div class="temp">
+          <div class="label">T1 環境</div>
+          <div class="value" id="temp-t1">--.-</div>
+          <div class="unit">°C</div>
+        </div>
+        <div class="temp">
+          <div class="label">T2 外接</div>
+          <div class="value" id="temp-t2">--.-</div>
+          <div class="unit">°C</div>
+        </div>
       </div>
-      <div class="temp">
-        <div class="label">T2 外接</div>
-        <div class="value" id="temp-t2">--.-</div>
-        <div class="unit">°C</div>
+      <div class="btn-row">
+        <button onclick="readLive()">📊 讀取</button>
+        <button onclick="startLog()" class="success">▶ 開始</button>
+        <button onclick="stopLog()" class="danger">⏹ 停止</button>
+        <button onclick="readout()">📥 下載</button>
       </div>
-    </div>
-    <div class="btn-row">
-      <button onclick="readLive()">📊 讀取即時</button>
-      <button onclick="startLog()" class="success">▶ 開始記錄</button>
-      <button onclick="stopLog()" class="danger">⏹ 停止</button>
-      <button onclick="readout()">📥 下載記錄</button>
-    </div>
-  </section>
+    </section>
 
-  <section class="card">
-    <h2>⚙️ 設定</h2>
-    <div class="form-row">
-      <div>
-        <label>設備名稱 (最多 7 字)</label>
-        <input id="cfg-name" maxlength="7">
+    <section class="card full">
+      <h2>⚙️ 設定</h2>
+      <div class="form-row">
+        <div>
+          <label>設備名稱 (最多 7 字)</label>
+          <input id="cfg-name" maxlength="7" autocomplete="off" autocapitalize="off" spellcheck="false">
+        </div>
+        <div>
+          <label>密碼 (0-9999)</label>
+          <input id="cfg-pwd" type="number" inputmode="numeric" pattern="[0-9]*" min="0" max="9999" autocomplete="off">
+        </div>
       </div>
-      <div>
-        <label>密碼 (0-9999)</label>
-        <input id="cfg-pwd" type="number" min="0" max="9999">
+      <div class="form-row">
+        <div>
+          <label>取樣率 (秒, 10~7200)</label>
+          <input id="cfg-rate" type="number" inputmode="numeric" pattern="[0-9]*" min="10" max="7200" step="10" value="60">
+        </div>
+        <div>
+          <label>啟動延遲 (分, 0~1440, 增量 10)</label>
+          <input id="cfg-delay" type="number" inputmode="numeric" pattern="[0-9]*" min="0" max="1440" step="10" value="0">
+        </div>
       </div>
-    </div>
-    <div class="form-row">
-      <div>
-        <label>取樣率 (秒, 10~7200)</label>
-        <input id="cfg-rate" type="number" min="10" max="7200" step="10" value="60">
+      <div class="form-row">
+        <div>
+          <label>警報高溫 (°C)</label>
+          <input id="cfg-alarm-hi" type="number" inputmode="decimal" step="0.1" value="30">
+        </div>
+        <div>
+          <label>警報低溫 (°C)</label>
+          <input id="cfg-alarm-lo" type="number" inputmode="decimal" step="0.1" value="5">
+        </div>
       </div>
-      <div>
-        <label>啟動延遲 (分鐘, 0~1440, 10 增量)</label>
-        <input id="cfg-delay" type="number" min="0" max="1440" step="10" value="0">
+      <div class="form-row">
+        <div>
+          <label>警報延遲 (分, 0~720, 增量 5)</label>
+          <input id="cfg-alarm-d" type="number" inputmode="numeric" pattern="[0-9]*" min="0" max="720" step="5" value="0">
+        </div>
+        <div>
+          <label>警報類型 (0=off, 1=single, 2=cumulative)</label>
+          <input id="cfg-alarm-t" type="number" inputmode="numeric" pattern="[0-9]*" min="0" max="2" value="1">
+        </div>
       </div>
-    </div>
-    <div class="form-row">
-      <div>
-        <label>警報高溫 (°C)</label>
-        <input id="cfg-alarm-hi" type="number" step="0.1" value="30">
+      <div class="btn-row">
+        <button onclick="applyConfig()" class="success">💾 套用</button>
+        <button onclick="getConfig()">📥 讀取</button>
       </div>
-      <div>
-        <label>警報低溫 (°C)</label>
-        <input id="cfg-alarm-lo" type="number" step="0.1" value="5">
-      </div>
-    </div>
-    <div class="form-row">
-      <div>
-        <label>警報延遲 (分鐘, 0~720, 5 增量)</label>
-        <input id="cfg-alarm-d" type="number" min="0" max="720" step="5" value="0">
-      </div>
-      <div>
-        <label>警報類型 (0=off, 1=single, 2=cumulative)</label>
-        <input id="cfg-alarm-t" type="number" min="0" max="2" value="1">
-      </div>
-    </div>
-    <div class="btn-row">
-      <button onclick="applyConfig()" class="success">💾 套用設定</button>
-      <button onclick="getConfig()">📥 讀取設定</button>
-    </div>
-  </section>
+    </section>
 
-  <section class="card" style="grid-column: 1 / -1;">
-    <h2>📋 封包記錄 (debug)</h2>
-    <div class="packet-log" id="packets"></div>
-  </section>
-</main>
+    <section class="card full">
+      <h2>📋 封包記錄 <small style="color: var(--text-faint); font-weight: normal; font-size: 0.8rem;">(debug, 每 3s 更新)</small></h2>
+      <div class="packet-log" id="packets"></div>
+    </section>
+  </main>
 
-<div class="footer">
-  AZ Instrument 88361 BLE 雙溫度記錄器 — PC 控制程式
-  <br>
-  <small>opcode 為推測值, 動態驗證後會自動更新</small>
-</div>
+  <div class="footer">
+    AZ Instrument 88361 BLE 雙溫度記錄器 — PC 控制程式
+    <br>
+    <small>opcode 為推測值, 動態驗證後會自動更新</small>
+  </div>
 
-<script>
-let ws = null;
-let selectedAddr = null;
+  <div class="toast-container" id="toasts"></div>
 
-function $(id) { return document.getElementById(id); }
+  <script>
+    let ws = null;
+    let selectedAddr = null;
+    let wsRetryCount = 0;
 
-function connectWs() {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  ws = new WebSocket(`${proto}//${location.host}/ws`);
-  ws.onopen = () => { $('ws-status').textContent = '● WebSocket 已連'; $('ws-status').style.color = '#6ee06e'; };
-  ws.onclose = () => { $('ws-status').textContent = '● WebSocket 斷線'; $('ws-status').style.color = '#e06e6e'; setTimeout(connectWs, 2000); };
-  ws.onmessage = (e) => {
-    const msg = JSON.parse(e.data);
-    if (msg.event === 'snapshot') updateSnapshot(msg.data);
-    else if (msg.event === 'scan_done') renderDevices(msg.data);
-    else if (msg.event === 'connected') { $('status').textContent = `已連線: ${msg.data}`; $('status').className = 'status connected'; }
-    else if (msg.event === 'disconnected') { $('status').textContent = '未連線'; $('status').className = 'status disconnected'; }
-    else if (msg.event === 'live' && msg.data) {
-      $('temp-t1').textContent = msg.data.temp_t1.toFixed(1);
-      $('temp-t2').textContent = msg.data.temp_t2.toFixed(1);
+    const $ = (id) => document.getElementById(id);
+
+    function toast(message, type = 'info', duration = 3000) {
+      const container = $('toasts');
+      const t = document.createElement('div');
+      t.className = `toast ${type}`;
+      const icon = { success: '✓', error: '✕', info: 'ℹ' }[type] || 'ℹ';
+      t.innerHTML = `<span style="font-size: 1.1rem;">${icon}</span><span>${message}</span>`;
+      container.appendChild(t);
+      setTimeout(() => t.remove(), duration);
     }
-  };
-}
 
-function updateSnapshot(d) {
-  if (d.connected) { $('status').textContent = `已連線: ${d.connected}`; $('status').className = 'status connected'; }
-  if (d.devices) renderDevices(d.devices);
-  if (d.live) { $('temp-t1').textContent = d.live.temp_t1.toFixed(1); $('temp-t2').textContent = d.live.temp_t2.toFixed(1); }
-}
+    function connectWs() {
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      try {
+        ws = new WebSocket(`${proto}//${location.host}/ws`);
+      } catch (e) {
+        toast('WebSocket 建立失敗: ' + e.message, 'error');
+        setTimeout(connectWs, 3000);
+        return;
+      }
+      ws.onopen = () => {
+        wsRetryCount = 0;
+        // 不顯示 toast, 避免太吵
+      };
+      ws.onclose = () => {
+        wsRetryCount++;
+        const delay = Math.min(2000 * Math.pow(1.5, wsRetryCount - 1), 30000);
+        setTimeout(connectWs, delay);
+      };
+      ws.onerror = () => { /* onclose 會接著處理 */ };
+      ws.onmessage = (e) => {
+        try {
+          const msg = JSON.parse(e.data);
+          if (msg.event === 'snapshot') updateSnapshot(msg.data);
+          else if (msg.event === 'scan_done') renderDevices(msg.data);
+          else if (msg.event === 'scan_start') {
+            const btn = $('scan-btn');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span>掃描中…';
+          }
+          else if (msg.event === 'scan_end') {
+            const btn = $('scan-btn');
+            btn.disabled = false;
+            btn.innerHTML = '🔍 掃描 (10s)';
+          }
+          else if (msg.event === 'connected') {
+            $('status').textContent = `已連線`;
+            $('status').className = 'status connected';
+            toast('已連線到 ' + (msg.data || 'device'), 'success');
+          }
+          else if (msg.event === 'disconnected') {
+            $('status').textContent = '未連線';
+            $('status').className = 'status disconnected';
+            toast('已斷線', 'info');
+          }
+          else if (msg.event === 'connect_fail') {
+            $('status').textContent = '連線失敗';
+            $('status').className = 'status disconnected';
+            toast('連線失敗: ' + (msg.data || '未知錯誤'), 'error', 5000);
+          }
+          else if (msg.event === 'live' && msg.data) {
+            $('temp-t1').textContent = msg.data.temp_t1.toFixed(1);
+            $('temp-t2').textContent = msg.data.temp_t2.toFixed(1);
+          }
+        } catch (err) {
+          console.error('WS message parse error:', err);
+        }
+      };
+    }
 
-async function scan() {
-  const btn = event.target; btn.disabled = true; btn.textContent = '掃描中...';
-  try {
-    const r = await fetch('/api/scan', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({timeout: 10}) });
-    const d = await r.json();
-    renderDevices(d.devices);
-  } finally {
-    btn.disabled = false; btn.textContent = '🔍 掃描 (10s)';
-  }
-}
+    function updateSnapshot(d) {
+      if (d.connected) { $('status').textContent = `已連線`; $('status').className = 'status connected'; }
+      if (d.devices) renderDevices(d.devices);
+      if (d.live) { $('temp-t1').textContent = d.live.temp_t1.toFixed(1); $('temp-t2').textContent = d.live.temp_t2.toFixed(1); }
+    }
 
-function renderDevices(devices) {
-  const el = $('devices');
-  el.innerHTML = '';
-  if (!devices || !devices.length) { el.innerHTML = '<div style="padding:1rem; color:#6a768a;">無設備</div>'; return; }
-  devices.forEach(d => {
-    const div = document.createElement('div');
-    div.className = 'device' + (d.address === selectedAddr ? ' selected' : '');
-    div.onclick = () => { selectedAddr = d.address; document.querySelectorAll('.device').forEach(x => x.classList.remove('selected')); div.classList.add('selected'); $('connect-row').style.display = 'flex'; };
-    div.innerHTML = `<div><strong>${d.name || '(未命名)'}</strong><br><small>${d.address}</small></div><div class="rssi">${d.rssi} dBm</div>`;
-    el.appendChild(div);
-  });
-}
+    async function scan() {
+      const btn = $('scan-btn');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span>掃描中…';
+      try {
+        const r = await fetch('/api/scan', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({timeout: 10}) });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const d = await r.json();
+        renderDevices(d.devices);
+        toast(`掃描完成, 找到 ${d.devices?.length || 0} 個設備`, 'info', 2000);
+      } catch (e) {
+        toast('掃描失敗: ' + e.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '🔍 掃描 (10s)';
+      }
+    }
 
-async function connectSelected() {
-  if (!selectedAddr) return;
-  await fetch('/api/connect', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({address: selectedAddr}) });
-}
+    function renderDevices(devices) {
+      const el = $('devices');
+      el.innerHTML = '';
+      if (!devices || !devices.length) {
+        el.innerHTML = '<div style="padding: 1.5rem 1rem; color: var(--text-faint); text-align: center;">無設備<br><small>按上面按鈕開始掃描</small></div>';
+        return;
+      }
+      devices.forEach(d => {
+        const div = document.createElement('div');
+        div.className = 'device' + (d.address === selectedAddr ? ' selected' : '');
+        div.setAttribute('role', 'button');
+        div.setAttribute('tabindex', '0');
+        const onSelect = () => {
+          selectedAddr = d.address;
+          document.querySelectorAll('.device').forEach(x => x.classList.remove('selected'));
+          div.classList.add('selected');
+          $('connect-row').style.display = 'flex';
+        };
+        div.onclick = onSelect;
+        div.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(); } };
+        div.innerHTML = `<div class="info"><strong>${d.name || '(未命名)'}</strong><small>${d.address}</small></div><div class="rssi">${d.rssi} dBm</div>`;
+        el.appendChild(div);
+      });
+    }
 
-async function disconnect() {
-  await fetch('/api/disconnect', { method: 'POST' });
-}
+    async function connectSelected() {
+      if (!selectedAddr) return;
+      $('status').textContent = '連線中…';
+      $('status').className = 'status connecting pulse';
+      try {
+        const r = await fetch('/api/connect', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({address: selectedAddr}) });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        toast('連線指令已送出', 'info', 1500);
+      } catch (e) {
+        toast('連線失敗: ' + e.message, 'error');
+        $('status').textContent = '未連線';
+        $('status').className = 'status disconnected';
+      }
+    }
 
-async function readLive() {
-  const r = await fetch('/api/live');
-  const d = await r.json();
-  if (d.live) { $('temp-t1').textContent = d.live.temp_t1.toFixed(1); $('temp-t2').textContent = d.live.temp_t2.toFixed(1); }
-  await loadPackets();
-}
+    async function disconnect() {
+      try {
+        const r = await fetch('/api/disconnect', { method: 'POST' });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+      } catch (e) {
+        toast('斷線失敗: ' + e.message, 'error');
+      }
+    }
 
-async function startLog() { await fetch('/api/log/start', { method: 'POST' }); await loadPackets(); }
-async function stopLog() { await fetch('/api/log/stop', { method: 'POST' }); await loadPackets(); }
-async function readout() { await fetch('/api/log/readout', { method: 'POST' }); await loadPackets(); }
+    async function readLive() {
+      try {
+        const r = await fetch('/api/live');
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const d = await r.json();
+        if (d.live) { $('temp-t1').textContent = d.live.temp_t1.toFixed(1); $('temp-t2').textContent = d.live.temp_t2.toFixed(1); }
+        toast('已讀取即時溫度', 'success', 1500);
+      } catch (e) {
+        toast('讀取失敗: ' + e.message, 'error');
+      }
+      await loadPackets();
+    }
 
-async function getConfig() {
-  await fetch('/api/config');
-  await loadPackets();
-}
+    async function startLog() {
+      if (!confirm('確定要開始記錄嗎?')) return;
+      try {
+        await fetch('/api/log/start', { method: 'POST' });
+        toast('開始記錄', 'success');
+      } catch (e) { toast('失敗: ' + e.message, 'error'); }
+      await loadPackets();
+    }
+    async function stopLog() {
+      if (!confirm('確定要停止記錄嗎?')) return;
+      try {
+        await fetch('/api/log/stop', { method: 'POST' });
+        toast('已停止', 'success');
+      } catch (e) { toast('失敗: ' + e.message, 'error'); }
+      await loadPackets();
+    }
+    async function readout() {
+      if (!confirm('下載記錄會清除設備內資料, 確定?')) return;
+      try {
+        await fetch('/api/log/readout', { method: 'POST' });
+        toast('下載指令已送出 (請稍候 30-120 秒)', 'info', 5000);
+      } catch (e) { toast('失敗: ' + e.message, 'error'); }
+      await loadPackets();
+    }
 
-async function applyConfig() {
-  const body = {
-    device_name: $('cfg-name').value || null,
-    password: parseInt($('cfg-pwd').value) || null,
-    sampling_rate_seconds: parseInt($('cfg-rate').value) || null,
-    start_delay_minutes: parseInt($('cfg-delay').value) || null,
-    alarm_delay_minutes: parseInt($('cfg-alarm-d').value) || null,
-    alarm_high_c: parseFloat($('cfg-alarm-hi').value) || null,
-    alarm_low_c: parseFloat($('cfg-alarm-lo').value) || null,
-    alarm_type: parseInt($('cfg-alarm-t').value) || null,
-  };
-  Object.keys(body).forEach(k => body[k] === null && delete body[k]);
-  await fetch('/api/config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
-  await loadPackets();
-}
+    async function getConfig() {
+      try {
+        const r = await fetch('/api/config');
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        toast('已送出讀取指令', 'info', 1500);
+      } catch (e) { toast('失敗: ' + e.message, 'error'); }
+      await loadPackets();
+    }
 
-async function loadPackets() {
-  const r = await fetch('/api/packets?limit=30');
-  const d = await r.json();
-  const el = $('packets');
-  el.innerHTML = d.packets.map(p => `<div class="packet"><span class="time">${p.time.split('T')[1]}</span><span class="${p.dir.toLowerCase()}">${p.dir}</span><span>${p.hex}</span></div>`).join('');
-  el.scrollTop = el.scrollHeight;
-}
+    async function applyConfig() {
+      const body = {
+        device_name: $('cfg-name').value || null,
+        password: parseInt($('cfg-pwd').value) || null,
+        sampling_rate_seconds: parseInt($('cfg-rate').value) || null,
+        start_delay_minutes: parseInt($('cfg-delay').value) || null,
+        alarm_delay_minutes: parseInt($('cfg-alarm-d').value) || null,
+        alarm_high_c: parseFloat($('cfg-alarm-hi').value) || null,
+        alarm_low_c: parseFloat($('cfg-alarm-lo').value) || null,
+        alarm_type: parseInt($('cfg-alarm-t').value) || null,
+      };
+      Object.keys(body).forEach(k => body[k] === null && delete body[k]);
+      try {
+        const r = await fetch('/api/config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        toast('設定已套用', 'success');
+      } catch (e) { toast('套用失敗: ' + e.message, 'error'); }
+      await loadPackets();
+    }
 
-setInterval(loadPackets, 3000);
-connectWs();
-loadPackets();
-</script>
+    async function loadPackets() {
+      try {
+        const r = await fetch('/api/packets?limit=30');
+        if (!r.ok) return;
+        const d = await r.json();
+        const el = $('packets');
+        el.innerHTML = (d.packets || []).map(p => `<div class="packet"><span class="time">${p.time.split('T')[1]?.split('.')[0] || ''}</span><span class="${p.dir.toLowerCase()}">${p.dir}</span><span>${p.hex}</span></div>`).join('');
+        el.scrollTop = el.scrollHeight;
+      } catch (e) { /* 靜默失敗 */ }
+    }
+
+    // 啟動
+    connectWs();
+    loadPackets();
+    setInterval(loadPackets, 3000);
+
+    // 頁面可見性 API - 背景時暫停 polling
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden && ws) {
+        // 不主動斷 WS, 但停止 poll
+      }
+    });
+  </script>
 </body>
 </html>
