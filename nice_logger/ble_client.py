@@ -209,16 +209,36 @@ class NiceLoggerBleClient:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     async def scan(self, timeout: float = 10.0) -> list[DeviceInfo]:
-        """掃描附近 BLE 設備"""
+        """掃描附近 BLE 設備
+
+        Bleak 0.21+ / 3.0+ API 變更:
+          - discover() 回傳 List[BLEDevice] (沒有 rssi)
+          - discover(return_adv=True) 回傳 dict[address, (BLEDevice, AdvertisementData)]
+        """
         logging.info(f"掃描中 {timeout}s ...")
         self.state.devices.clear()
-        devices = await BleakScanner.discover(timeout=timeout)
+        discovered = await BleakScanner.discover(timeout=timeout, return_adv=True)
+        # Bleak 3.0+ 回傳 dict[address_str, (BLEDevice, AdvertisementData)]
+        # 但舊版 (0.19) 回傳 list[tuple]; 都支援
+        if isinstance(discovered, dict):
+            items = list(discovered.values())
+        else:
+            items = list(discovered)
         results = []
-        for d in devices:
+        for item in items:
+            # item 可能是 (device, adv_data) 或只有 device (容錯)
+            if isinstance(item, tuple) and len(item) == 2:
+                d, adv = item
+                rssi = adv.rssi
+                name = d.name or adv.local_name or "(未命名)"
+            else:
+                d = item
+                rssi = 0  # 沒拿到 rssi 時填 0
+                name = d.name or "(未命名)"
             info = DeviceInfo(
                 address=d.address,
-                name=d.name or "(未命名)",
-                rssi=d.rssi,
+                name=name,
+                rssi=rssi,
             )
             results.append(info)
             self.state.devices.append(info)
