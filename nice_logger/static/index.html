@@ -233,8 +233,12 @@
     .device.selected { background: rgba(42, 67, 101, 0.6); border-left: 3px solid var(--accent); padding-left: calc(0.75rem - 3px); }
     .device .info { min-width: 0; flex: 1; }
     .device .info strong { display: block; font-size: 0.95rem; }
-    .device .info small { color: var(--text-faint); font-size: 0.75rem; word-break: break-all; }
+    .device .info small { color: var(--text-faint); font-size: 0.75rem; word-break: break-all; display: block; }
     .device .rssi { color: var(--text-faint); font-size: 0.8rem; margin-left: 0.5rem; white-space: nowrap; }
+    .device.nice { background: rgba(110, 224, 110, 0.08); border-left: 3px solid var(--green); padding-left: calc(0.75rem - 3px); }
+    .device.nice.selected { background: rgba(42, 67, 101, 0.6); border-left: 3px solid var(--green); }
+    .badge { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 999px; font-size: 0.65rem; font-weight: 700; margin-left: 0.4rem; vertical-align: middle; }
+    .nice-badge { background: rgba(110, 224, 110, 0.2); color: var(--green); }
 
     /* === Packet log === */
     .packet-log {
@@ -545,9 +549,15 @@
         el.innerHTML = '<div style="padding: 1.5rem 1rem; color: var(--text-faint); text-align: center;">無設備<br><small>按上面按鈕開始掃描</small></div>';
         return;
       }
-      devices.forEach(d => {
+      // 排序: 88361 候選排最前, 同類按 rssi 排序
+      const sorted = devices.slice().sort((a, b) => {
+        if (a.is_nice_logger && !b.is_nice_logger) return -1;
+        if (!a.is_nice_logger && b.is_nice_logger) return 1;
+        return (b.rssi || -999) - (a.rssi || -999);
+      });
+      sorted.forEach(d => {
         const div = document.createElement('div');
-        div.className = 'device' + (d.address === selectedAddr ? ' selected' : '');
+        div.className = 'device' + (d.address === selectedAddr ? ' selected' : '') + (d.is_nice_logger ? ' nice' : '');
         div.setAttribute('role', 'button');
         div.setAttribute('tabindex', '0');
         const onSelect = () => {
@@ -558,7 +568,19 @@
         };
         div.onclick = onSelect;
         div.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(); } };
-        div.innerHTML = `<div class="info"><strong>${d.name || '(未命名)'}</strong><small>${d.address}</small></div><div class="rssi">${d.rssi} dBm</div>`;
+        // 組裝顯示
+        const mfgId = d.manufacturer_id != null ? '0x' + d.manufacturer_id.toString(16).toUpperCase().padStart(4, '0') : '—';
+        const mfgHex = d.m_scancode_hex || '';
+        const mfgBytes = mfgHex ? (mfgHex.length / 2) + 'B' : '—';
+        const tag = d.is_nice_logger ? '<span class="badge nice-badge">88361 候選</span>' : '';
+        div.innerHTML = `
+          <div class="info">
+            <strong>${d.name || '(未命名)'} ${tag}</strong>
+            <small>${d.address}</small>
+            <small style="color: var(--text-faint);">mfg ${mfgId} (${mfgBytes})${d.service_uuids && d.service_uuids.length ? ' · svc ' + d.service_uuids.length : ''}</small>
+          </div>
+          <div class="rssi">${d.rssi} dBm</div>
+        `;
         el.appendChild(div);
       });
     }

@@ -25,6 +25,7 @@ from nice_logger.ble_client import (
     Cmd, encode_temp_01c, encode_interval_seconds, encode_start_delay_minutes,
     encode_alarm_delay_minutes, encode_password, encode_device_name, hex_str,
 )
+from nice_logger.ble_probe import BleProbe, PROBE_ZONES
 
 
 # ===== 共用狀態 (process 全域) =====
@@ -85,10 +86,7 @@ class WsHub:
             "event": "snapshot",
             "data": {
                 "connected": state.connected.address if state.connected else None,
-                "devices": [
-                    {"address": d.address, "name": d.name, "rssi": d.rssi}
-                    for d in state.devices
-                ],
+                "devices": [_device_to_dict(d) for d in state.devices],
                 "live": {
                     "temp_t1": state.live.temp_t1,
                     "temp_t2": state.live.temp_t2,
@@ -129,9 +127,21 @@ async def health():
 @app.post("/api/scan")
 async def api_scan(req: ScanRequest):
     devices = await ble.scan(timeout=req.timeout)
-    return {"devices": [
-        {"address": d.address, "name": d.name, "rssi": d.rssi} for d in devices
-    ]}
+    return {"devices": [_device_to_dict(d) for d in devices]}
+
+
+def _device_to_dict(d: DeviceInfo) -> dict:
+    """序列化成 JSON 安全字典 (bytes 轉 hex)"""
+    return {
+        "address": d.address,
+        "name": d.name,
+        "rssi": d.rssi,
+        "manufacturer_id": d.manufacturer_id,
+        "manufacturer_id_hex": f"0x{d.manufacturer_id:04X}" if d.manufacturer_id is not None else None,
+        "m_scancode_hex": d.m_scancode_hex,
+        "service_uuids": d.service_uuids,
+        "is_nice_logger": d.is_nice_logger,
+    }
 
 
 @app.post("/api/connect")
@@ -210,6 +220,81 @@ async def api_log_stop():
 @app.post("/api/log/readout")
 async def api_log_readout():
     return {"ok": await ble.read_records()}
+
+
+# ===== BLE opcode 探測 =====
+probe_runner = BleProbe(state, ble)
+
+
+class ProbeRequest(BaseModel):
+    zones: list[str] | None = None  # 例如 ["READ_LIVE_CANDIDATES", "SET_CANDIDATES"]
+    delay: float = 0.05
+
+
+@app.post("/api/probe")
+async def api_probe(req: ProbeRequest):
+    """自動探測 0x00-0xFF opcode, 找出設備會回 notify 的命令
+
+    ⚠️ 危險: 會送每個 opcode 一次, 可能誤觸設備 reset / format / lock.
+    使用前請確認設備不處於關鍵記錄狀態.
+    """
+    if not state.connected:
+        raise HTTPException(400, "尚未連線")
+    if probe_runner.running:
+        raise HTTPException(409, "探測已在進行中")
+
+    # 選 zone
+    if req.zones:
+        zones = [z for z in PROBE_ZONES if z[0] in req.zones]
+        if not zones:
+            raise HTTPException(400, f"未知 zone: {req.zones}")
+    else:
+        zones = PROBE_ZONES  # 全跑
+
+    # 背景跑 (避免 HTTP timeout)
+    async def _run():
+        return await probe_runner.run(zones=zones, per_opcode_delay=req.delay)
+
+    task = asyncio.create_task(_run())
+
+    # 給 caller 簡單 status
+    return {
+        "started": True,
+        "zones": [z[0] for z in zones],
+        "total_opcodes": sum(z[2] - z[1] + 1 for z in zones),
+        "hint": "用 GET /api/probe/status 查進度",
+    }
+
+
+@app.get("/api/probe/status")
+async def api_probe_status():
+    """查探測進度 + 結果"""
+    if probe_runner.running:
+        return {
+            "running": True,
+            "progress": f"{len(probe_runner.results)} tested",
+        }
+    summary = state.probe_summary
+    if not summary:
+        return {"running": False, "results": None}
+    return {
+        "running": False,
+        "summary": {
+            "total": summary["total"],
+            "responded_count": len(summary["responded"]),
+            "responded_hex": [f"0x{op:02X}" for op in summary["responded"]],
+            "blocked_hex": [f"0x{op:02X}" for op in summary["blocked"]],
+            "elapsed_sec": summary["elapsed_sec"],
+            "zones": summary["zones"],
+        },
+        "results": summary["results"],
+    }
+
+
+@app.post("/api/probe/stop")
+async def api_probe_stop():
+    probe_runner.stop()
+    return {"stopping": True}
 
 
 # ===== WebSocket =====
