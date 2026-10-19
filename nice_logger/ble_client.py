@@ -85,32 +85,33 @@ def hex_str(b: bytes) -> str:
     return ",".join(f"{x:02X}" for x in b)
 
 
-# ===== 推測的 opcode enum =====
-# 真實數值需動態 Frida 或硬體驗證; 給 PC SDK 用
+# ===== 真實的 opcode enum (從 libil2cpp.so 反組譯得出) =====
+# 來源: DeviceManager.SendSetXxx 函式內部 mov w1, #imm 立即值
+# 反組譯時間: 2026-10-19, il2cppdumper 6.7.46 + capstone
 class Cmd(Enum):
-    """推測的 BLE 命令 opcode (待動態驗證)"""
-    # 設定類
-    SET_DEVICE_NAME = 0xA1
-    SET_PASSWORD = 0xA2
-    SET_SAMPLE_INTERVAL = 0xA3
-    SET_START_DELAY = 0xA4
-    SET_ALARM_THRESHOLD = 0xA5
-    SET_ALARM_DELAY = 0xA6
-    SET_ALARM_TYPE = 0xA7
-    SET_START_MODE = 0xA8
-    SET_STOP_MODE = 0xA9
-    SET_UNIT = 0xAA
-    SET_TIME = 0xAB
-    SET_LOGGER_ID = 0xAC
-    SAVE_CONFIG = 0xAE
-    # 控制類
-    START_LOG = 0xB1
-    STOP_LOG = 0xB2
-    # 讀取類
-    READ_LIVE = 0xC1
-    READOUT = 0xC2
-    GET_CONFIG = 0xC3
-    GET_DEVICE_INFO = 0xC4
+    """真實的 BLE 命令 opcode (從 ARM 機器碼反組譯)
+
+    這些值來自 DeviceManager.SendSetXxx 函式內部:
+        mov w1, #0x??  ; type
+        mov w2, #0x??  ; checkType
+        b InternalSendData
+    """
+    # 設定類 (從 SendSet* 反組譯)
+    CLEAR_SEND_QUEUE = 0x49
+    SET_CONFIGURE = 0x41          # SendSetConfigure
+    SET_DEVICE_TIME = 0x43       # SendSetDeviceTime
+    SET_LOGGER_ID = 0x50         # SendSetID
+    SET_UNIT_AND_PASSWORD = 0x53 # SendSetUnitAndPassword
+    SET_THRESHOLD = 0x58         # SendSetThreshold
+    # 查詢類 (type 從外部傳入, 推測)
+    QUERY_ALARM_THRESHOLD = 0x64
+    # 控制類 (推測: SendLoggerState/ReadOut 用 type=w1 從 caller 傳)
+    START_LOG = 0x55  # 推測 (待 SendLoggerState caller 反組譯)
+    STOP_LOG = 0x56   # 推測
+    READOUT = 0x57    # 推測
+    QUERY_CONFIGURE = 0x59  # 推測
+    # 讀取類 (推測)
+    READ_LIVE = 0x40  # 推測 (0x40 是 ASCII '@' 常見開頭)
 
 
 # ===== 資料模型 =====
@@ -121,7 +122,10 @@ class DeviceInfo:
     name: str
     rssi: int
     last_seen: datetime = field(default_factory=datetime.now)
-    m_scancode: bytes = b""  # 廣播前 59 bytes
+    m_scancode_hex: str = ""  # 廣播 manufacturer data (hex string, JSON 安全)
+    manufacturer_id: Optional[int] = None  # 公司 ID (e.g. 0x5002 = AZ Instrument)
+    service_uuids: list[str] = field(default_factory=list)
+    is_nice_logger: bool = False  # 推測為 88361 (mfg 0x5002 + name match)
 
 
 @dataclass
@@ -163,6 +167,8 @@ class BleState:
         # 封包歷史 (debug 用, 最近 200 筆)
         self.packet_log: list[dict] = []
         self._max_log = 200
+        # BLE opcode 探測結果
+        self.probe_summary: Optional[dict] = None
 
     def subscribe(self, callback: Callable):
         self._listeners.append(callback)
@@ -231,14 +237,33 @@ class NiceLoggerBleClient:
                 d, adv = item
                 rssi = adv.rssi
                 name = d.name or adv.local_name or "(未命名)"
+                mfg_id = None
+                mfg_data = b""
+                if adv.manufacturer_data:
+                    # 取第一個 (通常只會有一個)
+                    mfg_id, mfg_data = next(iter(adv.manufacturer_data.items()))
+                svc_uuids = [str(u) for u in (adv.service_uuids or [])]
+                # 猜測是否為 88361: AZ Instrument (0x5002) + name 含 Nice
+                is_nice = (
+                    mfg_id == 0x5002 or
+                    (name and "nice" in name.lower())
+                )
             else:
                 d = item
-                rssi = 0  # 沒拿到 rssi 時填 0
+                rssi = 0
                 name = d.name or "(未命名)"
+                mfg_id = None
+                mfg_data = b""
+                svc_uuids = []
+                is_nice = bool(name and "nice" in name.lower())
             info = DeviceInfo(
                 address=d.address,
                 name=name,
                 rssi=rssi,
+                m_scancode_hex=mfg_data.hex() if mfg_data else "",
+                manufacturer_id=mfg_id,
+                service_uuids=svc_uuids,
+                is_nice_logger=is_nice,
             )
             results.append(info)
             self.state.devices.append(info)
@@ -246,26 +271,62 @@ class NiceLoggerBleClient:
         return results
 
     async def connect(self, address: str) -> bool:
-        """連線到指定 MAC"""
+        """連線到指定 MAC
+
+        重要: AZ Instrument 88361 需要先配對 (pair) 才能 connect.
+        bleak 3.x API: pair 是 BleakClient.__init__ 的參數, 不是 connect() 的.
+        另外必須先做 GATT service discovery, 否則 write_gatt_char 會出
+        "Service Discovery has not been performed yet" 錯誤.
+        """
         if self._client and self._client.is_connected:
             await self.disconnect()
-        self._client = BleakClient(address)
+        # pair=True 在 __init__ 內設, 讓 connect 自動走 SSP/Just-Works pairing
+        # 不指定 services, 讓 bleak 跑預設 discovery
+        self._client = BleakClient(
+            address, pair=True, timeout=20.0
+        )
         self._loop = asyncio.get_event_loop()
         try:
-            await asyncio.wait_for(self._client.connect(), timeout=10)
+            await self._client.connect()
             if not self._client.is_connected:
                 return False
+            # 明確手動 service discovery (bleak 3.x 要求)
+            try:
+                svc_list = list(self._client.services)
+                logging.info(f"Service discovery 完成, 找到 {len(svc_list)} 個 service")
+                for svc in svc_list:
+                    for ch in svc.characteristics:
+                        logging.info(f"  svc {svc.uuid} ch {ch.uuid} {ch.properties}")
+            except Exception as e:
+                logging.warning(f"Service discovery 失敗: {e}")
             # 啟用 notify on 0xFFF2
             await self._client.start_notify(READ_UUID, self._on_notify)
-            # 記錄已連線設備
+            # 記錄已連線設備: 優先在 state.devices 找, 找不到則建一個新 DeviceInfo
+            found = None
             for d in self.state.devices:
                 if d.address == address:
-                    self.state.connected = d
+                    found = d
                     break
+            if found is None:
+                # 從 BleakClient 拿設備名 (bleak connect 後會 populated)
+                dev_name = "(已連線)"
+                try:
+                    if self._client._device and self._client._device.name:
+                        dev_name = self._client._device.name
+                except Exception:
+                    pass
+                found = DeviceInfo(
+                    address=address,
+                    name=dev_name,
+                    rssi=0,  # connect 後 bleak 不直接提供 rssi
+                    is_nice_logger=True,  # 連線階段信任 UI 已選對設備
+                )
+                self.state.devices.append(found)
+            self.state.connected = found
             await self.state._emit("connected", address)
             return True
         except Exception as e:
-            logging.error(f"連線失敗: {e}")
+            logging.exception(f"連線失敗 ({address}): {e}")
             return False
 
     async def disconnect(self):
@@ -298,13 +359,16 @@ class NiceLoggerBleClient:
                 logging.exception(f"解析 live data 失敗: {e}")
 
     async def _write(self, cmd: Cmd, payload: bytes = b"") -> bool:
-        """寫入 opcode + payload 到 0xFFF1"""
+        """寫入 opcode + payload 到 0xFFF1
+
+        bleak 3.0+ 改名: write_characteristic → write_gatt_char
+        """
         if not self._client or not self._client.is_connected:
             logging.error("尚未連線")
             return False
         data = bytes([cmd.value]) + payload
         try:
-            await self._client.write_characteristic(WRITE_UUID, data, response=True)
+            await self._client.write_gatt_char(WRITE_UUID, data, response=True)
             self.state.log_packet("TX", hex_str(data), note=f"Cmd=0x{cmd.value:02X} {cmd.name}")
             return True
         except Exception as e:
