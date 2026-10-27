@@ -59,9 +59,35 @@ python -m nice_logger.api
 
 - **📡 設備掃描**：列出附近 BLE 設備（含 RSSI）
 - **🌡️ 即時溫度**：T1 環境 + T2 外接測棒
+- **📈 MQTT 遙測**：訂閱 `sensor/nicelogger/#`，顯示各 logger 的溫度 / 電量 / RSSI / 記錄點數 + 溫度趨勢圖
 - **⚙️ 設定面板**：設備名稱 / 密碼 / 取樣率 / 啟動延遲 / 警報閾值
 - **▶ 開始 / ⏹ 停止 / 📥 下載**：記錄控制
 - **📋 封包記錄**：TX/RX hex 即時顯示（debug opcode 用）
+
+## MQTT 遙測管線
+
+Pi 上的 `nicelogger_gateway.py` 掃 BLE 廣播 → 解析 → 發佈到 MQTT；
+本專案的 `nice_logger/mqtt_feed.py` 訂閱同一主題，把資料送進網頁 UI。
+
+```
+88361 廣播 ──▶ nicelogger_gateway.py ──▶ MQTT broker
+                                          sensor/nicelogger/<device_id>
+                                                   │
+                                                   ▼
+                                   nice_logger/mqtt_feed.py
+                                          │            │
+                            /api/mqtt/records      WebSocket "mqtt"
+                                          ▼            ▼
+                                        網頁 MQTT 面板（卡片 + 折線圖）
+```
+
+- Broker 位址預設 `10.35.32.11:1883`，可用環境變數覆寫：
+  `NICELOGGER_MQTT_BROKER` / `NICELOGGER_MQTT_PORT` / `NICELOGGER_MQTT_TOPIC` / `NICELOGGER_MQTT_HISTORY`
+- 端點：`GET /api/mqtt/status`（連線狀態）、`GET /api/mqtt/records?limit=N`（歷史 + 各裝置最新值）
+- 歷史快取存在記憶體（預設 500 筆），重啟即清空；需要長期留存請讓
+  Windows 端的 `mqtt-worker` 一併訂閱 `sensor/nicelogger/*` 落地 MySQL。
+- 網頁 UI 以 `API_BASE` 自動偵測掛載前綴，根目錄（`http://<pi>:8000/`）與
+  反向代理子路徑（`http://<host>/nicelogger/`）都能正常運作。
 
 ## BLE 編碼輔助
 

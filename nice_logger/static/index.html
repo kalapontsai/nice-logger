@@ -120,6 +120,69 @@
       font-weight: 600;
     }
 
+    /* === MQTT 遙測面板 === */
+    .mqtt-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem 1rem;
+      align-items: center;
+      font-size: 0.78rem;
+      color: var(--text-faint);
+      margin-bottom: 0.8rem;
+    }
+    .mqtt-bar .dot {
+      width: 0.5rem; height: 0.5rem; border-radius: 50%;
+      background: var(--text-faint); flex: none;
+    }
+    .mqtt-bar .dot.live { background: var(--green); }
+    .mqtt-bar .dot.dead { background: var(--red); }
+    .mqtt-bar code { font-family: ui-monospace, monospace; }
+
+    .mqtt-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+      gap: 0.6rem;
+      margin-bottom: 0.9rem;
+    }
+    .mqtt-dev {
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm, 0.4rem);
+      padding: 0.6rem 0.7rem;
+      min-width: 0;
+    }
+    .mqtt-dev .name {
+      font-weight: 700;
+      font-size: 0.9rem;
+      color: var(--text);
+      display: flex; justify-content: space-between; gap: 0.4rem;
+    }
+    .mqtt-dev .mac {
+      font-family: ui-monospace, monospace;
+      font-size: 0.7rem;
+      color: var(--text-faint);
+      margin-bottom: 0.35rem;
+      word-break: break-all;
+    }
+    .mqtt-dev .row {
+      display: flex; justify-content: space-between; gap: 0.5rem;
+      font-size: 0.78rem; padding: 0.08rem 0;
+    }
+    .mqtt-dev .row .k { color: var(--text-faint); }
+    .mqtt-dev .row .v {
+      font-family: ui-monospace, monospace;
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
+    .mqtt-dev .row .v.warn { color: var(--warn, #fbbf24); }
+    .mqtt-chart { height: 16rem; position: relative; }
+    .mqtt-empty {
+      padding: 1.5rem 1rem;
+      color: var(--text-faint);
+      text-align: center;
+      font-size: 0.85rem;
+    }
+
     /* === Temperature (hero) === */
     .live-grid {
       display: grid;
@@ -257,12 +320,29 @@
       display: grid;
       grid-template-columns: 70px 24px 1fr;
       gap: 0.5rem;
-      padding: 0.1rem 0;
+      padding: 0.2rem 0;
       word-break: break-all;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
     }
-    .packet .tx { color: var(--green); }
-    .packet .rx { color: var(--accent); }
+    .packet:last-child { border-bottom: none; }
+    .packet .tx { color: var(--green); font-weight: 700; }
+    .packet .rx { color: var(--accent); font-weight: 700; }
     .packet .time { color: var(--text-faint); }
+    .packet .hex { color: var(--text-dim); }
+    .packet .decoded {
+      grid-column: 3 / 4;
+      color: var(--text);
+      font-family: -apple-system, "PingFang TC", sans-serif;
+      font-size: 0.78rem;
+      margin-top: 0.15rem;
+      padding-left: 0.4rem;
+      border-left: 2px solid var(--border);
+    }
+    .packet .decoded .key { color: var(--text-faint); }
+    .packet .decoded .val { color: var(--green); font-weight: 600; }
+    .packet .decoded .val.warn { color: #ffc107; }
+    .packet .decoded .cmd { color: var(--accent); font-weight: 700; }
+    .packet .decoded .err { color: var(--red); }
 
     /* === Loading spinner === */
     .spinner {
@@ -378,6 +458,9 @@
         <button onclick="stopLog()" class="danger">⏹ 停止</button>
         <button onclick="readout()">📥 下載</button>
       </div>
+      <div class="btn-row">
+        <button onclick="probeStart()" style="background:#7a5a2a;">🔬 探測 Start Payload (5 種 × 2s)</button>
+      </div>
     </section>
 
     <section class="card full">
@@ -429,7 +512,22 @@
     </section>
 
     <section class="card full">
-      <h2>📋 封包記錄 <small style="color: var(--text-faint); font-weight: normal; font-size: 0.8rem;">(debug, 每 3s 更新)</small></h2>
+      <h2>📈 MQTT 遙測 <small style="color: var(--text-faint); font-weight: normal; font-size: 0.8rem;">(sensor/nicelogger)</small></h2>
+      <div class="mqtt-bar">
+        <span class="dot" id="mqtt-dot"></span>
+        <span id="mqtt-state">未連線</span>
+        <span>broker <code id="mqtt-broker">-</code></span>
+        <span>topic <code id="mqtt-topic">-</code></span>
+        <span>最後訊息 <span id="mqtt-last">-</span></span>
+      </div>
+      <div class="mqtt-grid" id="mqtt-devices"></div>
+      <div class="mqtt-chart" id="mqtt-chart-box">
+        <canvas id="mqtt-chart"></canvas>
+      </div>
+    </section>
+
+    <section class="card full">
+      <h2>📋 封包記錄 <small style="color: var(--text-faint); font-weight: normal; font-size: 0.8rem;">(debug, 每 3s 更新; 連線時自動解碼欄位)</small></h2>
       <div class="packet-log" id="packets"></div>
     </section>
   </main>
@@ -449,6 +547,33 @@
 
     const $ = (id) => document.getElementById(id);
 
+    // ===== API base 自動偵測 =====
+    // 同一份 UI 會掛在兩個位置:
+    //   1. Pi 直連       http://<pi>:8000/            → 前綴 ''
+    //   2. Apache 反代   http://<host>/nicelogger/    → 前綴 '/nicelogger'
+    // 從 document 自己的 URL 反推掛載前綴, 不要寫死路徑。
+    const API_BASE = (() => {
+      const path = location.pathname;                 // 例: '/nicelogger/' 或 '/'
+      let dir = path.replace(/\/+$/, '');             // 去掉結尾斜線 → '/nicelogger' 或 ''
+      // 最後一段若是檔名 (含副檔名), 去掉它: '/nicelogger/index.html' → '/nicelogger'
+      if (/\.[a-z0-9]+$/i.test(dir)) dir = dir.replace(/\/[^/]+$/, '');
+      return dir;                                     // 根目錄掛載 → ''
+    })();
+
+    const api = (p) => `${API_BASE}${p}`;
+
+    // Chart.js 以動態方式載入, 才能跟著 API_BASE 走 (反代下 static 路徑會變)
+    function loadChartJs() {
+      return new Promise((resolve) => {
+        if (window.Chart) return resolve(true);
+        const s = document.createElement('script');
+        s.src = api('/static/chart.umd.min.js');
+        s.onload = () => resolve(true);
+        s.onerror = () => resolve(false);
+        document.head.appendChild(s);
+      });
+    }
+
     function toast(message, type = 'info', duration = 3000) {
       const container = $('toasts');
       const t = document.createElement('div');
@@ -462,7 +587,7 @@
     function connectWs() {
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
       try {
-        ws = new WebSocket(`${proto}//${location.host}/ws`);
+        ws = new WebSocket(`${proto}//${location.host}${API_BASE}/ws`);
       } catch (e) {
         toast('WebSocket 建立失敗: ' + e.message, 'error');
         setTimeout(connectWs, 3000);
@@ -512,6 +637,15 @@
             $('temp-t1').textContent = msg.data.temp_t1.toFixed(1);
             $('temp-t2').textContent = msg.data.temp_t2.toFixed(1);
           }
+          else if (msg.event === 'mqtt' && msg.data) {
+            // MQTT 新遙測: 快取後重繪面板
+            const rec = msg.data;
+            mqttState.records.push(rec);
+            if (mqttState.records.length > 300) mqttState.records.shift();
+            mqttState.latest[rec.device_id] = rec;
+            renderMqttDevices(mqttState.latest);
+            renderMqttChart(mqttState.records);
+          }
         } catch (err) {
           console.error('WS message parse error:', err);
         }
@@ -522,6 +656,129 @@
       if (d.connected) { $('status').textContent = `已連線`; $('status').className = 'status connected'; }
       if (d.devices) renderDevices(d.devices);
       if (d.live) { $('temp-t1').textContent = d.live.temp_t1.toFixed(1); $('temp-t2').textContent = d.live.temp_t2.toFixed(1); }
+      if (d.mqtt) renderMqttStatus(d.mqtt);
+      if (d.mqtt_latest) renderMqttDevices(d.mqtt_latest);
+    }
+
+    // ===== MQTT 遙測面板 =====
+    const mqttState = { records: [], latest: {}, chart: null, chartReady: false };
+
+    function renderMqttStatus(st) {
+      if (!st) return;
+      const dot = $('mqtt-dot');
+      dot.className = 'dot ' + (st.connected ? 'live' : 'dead');
+      $('mqtt-state').textContent = st.connected ? '已連線' : '未連線';
+      $('mqtt-broker').textContent = `${st.broker}:${st.port}`;
+      $('mqtt-topic').textContent = st.topic;
+      $('mqtt-last').textContent = st.last_message_at
+        ? new Date(st.last_message_at).toLocaleTimeString() : '-';
+    }
+
+    function fmtNum(v, digits, unit) {
+      if (v === null || v === undefined || Number.isNaN(v)) return 'N/A';
+      return `${Number(v).toFixed(digits)}${unit || ''}`;
+    }
+
+    function renderMqttDevices(latest) {
+      const el = $('mqtt-devices');
+      const ids = Object.keys(latest || {});
+      if (!ids.length) {
+        el.innerHTML = '<div class="mqtt-empty">尚無 MQTT 遙測資料<br><small>等待 sensor/nicelogger 訊息…</small></div>';
+        return;
+      }
+      el.innerHTML = ids.map(id => {
+        const r = latest[id];
+        const battery = r.battery_pct;
+        const batCls = (battery !== null && battery !== undefined && battery <= 20) ? ' warn' : '';
+        const probe = r.probe_connected
+          ? fmtNum(r.probe_temp_c, 2, ' °C')
+          : '<span style="color:var(--text-faint)">未接</span>';
+        return `<div class="mqtt-dev">
+          <div class="name"><span>${id}</span><span>${r.rssi ?? '-'} dBm</span></div>
+          <div class="mac">${r.mac || '-'}</div>
+          <div class="row"><span class="k">T1</span><span class="v">${fmtNum(r.temperature_c, 2, ' °C')}</span></div>
+          <div class="row"><span class="k">T2 探棒</span><span class="v">${probe}</span></div>
+          <div class="row"><span class="k">電量</span><span class="v${batCls}">${fmtNum(battery, 0, ' %')}</span></div>
+          <div class="row"><span class="k">記錄點</span><span class="v">${r.log_count ?? '-'}</span></div>
+          <div class="row"><span class="k">取樣</span><span class="v">${r.interval_sec ?? '-'} s</span></div>
+        </div>`;
+      }).join('');
+    }
+
+    function renderMqttChart(records) {
+      if (!mqttState.chartReady || !mqttState.chart) return;
+      const byDevice = {};
+      records.forEach(r => {
+        if (r.temperature_c === null || r.temperature_c === undefined) return;
+        (byDevice[r.device_id] = byDevice[r.device_id] || []).push(r);
+      });
+      const ids = Object.keys(byDevice);
+      const palette = ['#4ec9d0', '#fbbf24', '#6ee06e', '#e06e6e', '#a78bfa', '#f472b6'];
+      // 所有裝置共用時間軸: 取聯集後排序
+      const times = Array.from(new Set(records.map(r => r.received_at))).sort();
+      mqttState.chart.data.labels = times.map(t => new Date(t).toLocaleTimeString());
+      mqttState.chart.data.datasets = ids.map((id, i) => {
+        const color = palette[i % palette.length];
+        const map = new Map(byDevice[id].map(r => [r.received_at, r.temperature_c]));
+        return {
+          label: `${id} 溫度 (°C)`,
+          data: times.map(t => (map.has(t) ? map.get(t) : null)),
+          borderColor: color,
+          backgroundColor: color + '22',
+          borderWidth: 2,
+          pointRadius: 2,
+          tension: 0.25,
+          spanGaps: true,
+        };
+      });
+      mqttState.chart.update('none');
+    }
+
+    async function initMqttChart() {
+      const ok = await loadChartJs();
+      if (!ok) {
+        $('mqtt-chart-box').innerHTML = '<div class="mqtt-empty">Chart.js 載入失敗, 圖表停用</div>';
+        return;
+      }
+      mqttState.chart = new Chart($('mqtt-chart'), {
+        type: 'line',
+        data: { labels: [], datasets: [] },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          interaction: { mode: 'nearest', intersect: false },
+          scales: {
+            x: {
+              ticks: { color: '#8a96b0', maxTicksLimit: 8, font: { size: 10 } },
+              grid: { color: 'rgba(255,255,255,0.05)' },
+            },
+            y: {
+              ticks: { color: '#8a96b0', font: { size: 10 } },
+              grid: { color: 'rgba(255,255,255,0.05)' },
+              title: { display: true, text: '°C', color: '#8a96b0' },
+            },
+          },
+          plugins: {
+            legend: { labels: { color: '#8a96b0', boxWidth: 10, font: { size: 11 } } },
+            tooltip: { callbacks: { label: (c) => `${c.dataset.label}: ${c.parsed.y?.toFixed(2)} °C` } },
+          },
+        },
+      });
+      mqttState.chartReady = true;
+    }
+
+    async function loadMqtt() {
+      try {
+        const r = await fetch(api('/api/mqtt/records?limit=300'));
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const d = await r.json();
+        mqttState.records = d.records || [];
+        mqttState.latest = d.latest || {};
+        renderMqttStatus(d.status);
+        renderMqttDevices(mqttState.latest);
+        renderMqttChart(mqttState.records);
+      } catch (e) { /* 靜默失敗, 下一輪重試 */ }
     }
 
     async function scan() {
@@ -529,7 +786,7 @@
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner"></span>掃描中…';
       try {
-        const r = await fetch('/api/scan', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({timeout: 10}) });
+        const r = await fetch(api('/api/scan'), { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({timeout: 10}) });
         if (!r.ok) throw new Error('HTTP ' + r.status);
         const d = await r.json();
         renderDevices(d.devices);
@@ -590,7 +847,7 @@
       $('status').textContent = '連線中…';
       $('status').className = 'status connecting pulse';
       try {
-        const r = await fetch('/api/connect', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({address: selectedAddr}) });
+        const r = await fetch(api('/api/connect'), { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({address: selectedAddr}) });
         if (!r.ok) throw new Error('HTTP ' + r.status);
         toast('連線指令已送出', 'info', 1500);
       } catch (e) {
@@ -602,7 +859,7 @@
 
     async function disconnect() {
       try {
-        const r = await fetch('/api/disconnect', { method: 'POST' });
+        const r = await fetch(api('/api/disconnect'), { method: 'POST' });
         if (!r.ok) throw new Error('HTTP ' + r.status);
       } catch (e) {
         toast('斷線失敗: ' + e.message, 'error');
@@ -611,7 +868,7 @@
 
     async function readLive() {
       try {
-        const r = await fetch('/api/live');
+        const r = await fetch(api('/api/live'));
         if (!r.ok) throw new Error('HTTP ' + r.status);
         const d = await r.json();
         if (d.live) { $('temp-t1').textContent = d.live.temp_t1.toFixed(1); $('temp-t2').textContent = d.live.temp_t2.toFixed(1); }
@@ -625,7 +882,7 @@
     async function startLog() {
       if (!confirm('確定要開始記錄嗎?')) return;
       try {
-        await fetch('/api/log/start', { method: 'POST' });
+        await fetch(api('/api/log/start'), { method: 'POST' });
         toast('開始記錄', 'success');
       } catch (e) { toast('失敗: ' + e.message, 'error'); }
       await loadPackets();
@@ -633,7 +890,7 @@
     async function stopLog() {
       if (!confirm('確定要停止記錄嗎?')) return;
       try {
-        await fetch('/api/log/stop', { method: 'POST' });
+        await fetch(api('/api/log/stop'), { method: 'POST' });
         toast('已停止', 'success');
       } catch (e) { toast('失敗: ' + e.message, 'error'); }
       await loadPackets();
@@ -641,15 +898,40 @@
     async function readout() {
       if (!confirm('下載記錄會清除設備內資料, 確定?')) return;
       try {
-        await fetch('/api/log/readout', { method: 'POST' });
+        await fetch(api('/api/log/readout'), { method: 'POST' });
         toast('下載指令已送出 (請稍候 30-120 秒)', 'info', 5000);
       } catch (e) { toast('失敗: ' + e.message, 'error'); }
       await loadPackets();
     }
 
+    async function probeStart() {
+      if (!confirm('依序試 5 種 Start payload, 總共約 10 秒, 按下後不要動滑鼠, 確定?')) return;
+      const btn = event.target;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span>探測中...';
+      try {
+        const r = await fetch(api('/api/log/probe'), { method: 'POST' });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const d = await r.json();
+        const responded = d.results?.filter(x => x.responded) || [];
+        if (responded.length > 0) {
+          const winner = responded[0];
+          toast(`✓ 候選 #${winner.index} 回應! payload=${winner.payload_hex}`, 'success', 8000);
+        } else {
+          toast(`✗ 5 種 payload 都無回應, 需用 nRF Sniffer 抓 App 封包`, 'error', 8000);
+        }
+      } catch (e) {
+        toast('探測失敗: ' + e.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '🔬 探測 Start Payload (5 種 × 2s)';
+      }
+      await loadPackets();
+    }
+
     async function getConfig() {
       try {
-        const r = await fetch('/api/config');
+        const r = await fetch(api('/api/config'));
         if (!r.ok) throw new Error('HTTP ' + r.status);
         toast('已送出讀取指令', 'info', 1500);
       } catch (e) { toast('失敗: ' + e.message, 'error'); }
@@ -669,7 +951,7 @@
       };
       Object.keys(body).forEach(k => body[k] === null && delete body[k]);
       try {
-        const r = await fetch('/api/config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+        const r = await fetch(api('/api/config'), { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
         if (!r.ok) throw new Error('HTTP ' + r.status);
         toast('設定已套用', 'success');
       } catch (e) { toast('套用失敗: ' + e.message, 'error'); }
@@ -678,19 +960,74 @@
 
     async function loadPackets() {
       try {
-        const r = await fetch('/api/packets?limit=30');
+        const r = await fetch(api('/api/packets?limit=30'));
         if (!r.ok) return;
         const d = await r.json();
         const el = $('packets');
-        el.innerHTML = (d.packets || []).map(p => `<div class="packet"><span class="time">${p.time.split('T')[1]?.split('.')[0] || ''}</span><span class="${p.dir.toLowerCase()}">${p.dir}</span><span>${p.hex}</span></div>`).join('');
+        el.innerHTML = (d.packets || []).map(p => {
+          const time = p.time.split('T')[1]?.split('.')[0] || '';
+          const dirCls = p.dir.toLowerCase();
+          const decoded = renderDecoded(p.decoded, p.dir);
+          return `<div class="packet"><span class="time">${time}</span><span class="${dirCls}">${p.dir}</span><div><span class="hex">${p.hex}</span>${decoded}</div></div>`;
+        }).join('');
         el.scrollTop = el.scrollHeight;
       } catch (e) { /* 靜默失敗 */ }
+    }
+
+    function renderDecoded(d, dir) {
+      if (!d || d.status === 'empty') return '';
+      if (d.status === 'unparsed' || d.status === 'error') {
+        return `<div class="decoded"><span class="err">⚠ ${d.reason || 'parse failed'}</span></div>`;
+      }
+      if (d.status === 'partial') {
+        const bytes = (d.bytes || []).slice(0, 12).join(' ');
+        return `<div class="decoded"><span class="key">raw bytes:</span> <span class="val warn">${bytes}${(d.bytes||[]).length>12?'…':''}</span></div>`;
+      }
+      if (d.kind === 'command') {
+        const cmdBadge = `<span class="cmd">${d.cmd_name}</span> <span class="key">opcode ${d.opcode}</span>`;
+        const payload = d.payload_len ? `<span class="key">· payload ${d.payload_len}B</span>` : '';
+        let extra = '';
+        if (d.interpreted && d.interpreted.length) {
+          extra = '<div style="margin-top:0.15rem">' + d.interpreted.map(f => {
+            const val = f.value === null ? '<span class="val warn">N/A</span>' : `<span class="val">${typeof f.value === 'number' ? f.value.toFixed(2) : f.value}${f.unit||''}</span>`;
+            return `<span class="key">${f.name}=</span>${val} `;
+          }).join('') + '</div>';
+        }
+        return `<div class="decoded">${cmdBadge} ${payload}${extra}</div>`;
+      }
+      if (d.kind === 'notify' && d.format === 'android_csv') {
+        const parts = [];
+        const temps = d.temperatures || {};
+        const humids = d.humidities || {};
+        for (const [k, v] of Object.entries(temps)) {
+          if (v.value === null) {
+            parts.push(`<span class="key">${k}=</span><span class="val warn">N/A</span>`);
+          } else {
+            parts.push(`<span class="key">${k}=</span><span class="val">${v.value.toFixed(1)}${v.unit}</span>`);
+          }
+        }
+        for (const [k, v] of Object.entries(humids)) {
+          parts.push(`<span class="key">${k}=</span><span class="val">${v.value.toFixed(1)}${v.unit}</span>`);
+        }
+        if (d.battery) {
+          parts.push(`<span class="key">bat=</span><span class="val">${d.battery.value.toFixed(0)}${d.battery.unit}</span>`);
+        }
+        parts.push(`<span class="key">· ${d.field_count} fields</span>`);
+        return `<div class="decoded">${parts.join(' ')}</div>`;
+      }
+      if (d.kind === 'notify') {
+        const bytes = (d.bytes || d.payload_hex || '').toString().slice(0, 40);
+        return `<div class="decoded"><span class="key">${d.payload_len}B:</span> <span class="val warn">${bytes}</span></div>`;
+      }
+      return '';
     }
 
     // 啟動
     connectWs();
     loadPackets();
     setInterval(loadPackets, 3000);
+    initMqttChart().then(() => loadMqtt());
+    setInterval(loadMqtt, 15000);
 
     // 頁面可見性 API - 背景時暫停 polling
     document.addEventListener('visibilitychange', () => {

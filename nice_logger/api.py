@@ -12,6 +12,7 @@ FastAPI server: 給瀏覽器 UI 用的 REST + WebSocket 介面
 import asyncio
 import json
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -26,11 +27,23 @@ from nice_logger.ble_client import (
     encode_alarm_delay_minutes, encode_password, encode_device_name, hex_str,
 )
 from nice_logger.ble_probe import BleProbe, PROBE_ZONES
+from nice_logger.mqtt_feed import (
+    MqttFeed, DEFAULT_BROKER, DEFAULT_PORT, DEFAULT_TOPIC, DEFAULT_HISTORY,
+)
 
 
 # ===== 共用狀態 (process 全域) =====
 state = BleState()
 ble = NiceLoggerBleClient(state)
+
+# MQTT 遙測訂閱 (sensor/nicelogger)
+# 環境變數可覆寫 broker / topic, 方便在不同網路環境部署。
+mqtt_feed = MqttFeed(
+    broker=os.getenv("NICELOGGER_MQTT_BROKER", DEFAULT_BROKER),
+    port=int(os.getenv("NICELOGGER_MQTT_PORT", DEFAULT_PORT)),
+    topic=os.getenv("NICELOGGER_MQTT_TOPIC", DEFAULT_TOPIC),
+    history=int(os.getenv("NICELOGGER_MQTT_HISTORY", DEFAULT_HISTORY)),
+)
 
 
 # ===== Pydantic models (HTTP request body) =====
@@ -94,6 +107,9 @@ class WsHub:
                 } if state.live else None,
                 "config": state.config.__dict__ if state.config else None,
                 "last_rx": state.last_rx.isoformat() if state.last_rx else None,
+                "packets": state.packet_log[-50:],
+                "mqtt": mqtt_feed.status(),
+                "mqtt_latest": mqtt_feed.latest(),
             },
         }
 
@@ -108,9 +124,23 @@ async def lifespan(app: FastAPI):
     async def forward(event: str, data):
         await hub.broadcast(event, data)
     state.subscribe(forward)
+
+    # 啟動 MQTT 訂閱。paho 的 network thread 不是 asyncio thread,
+    # 所以用 run_coroutine_threadsafe 把事件送回 event loop。
+    loop = asyncio.get_running_loop()
+
+    def on_mqtt_record(record):
+        asyncio.run_coroutine_threadsafe(
+            hub.broadcast("mqtt", record.to_dict()), loop
+        )
+
+    mqtt_feed.on_record = on_mqtt_record
+    mqtt_feed.start()
+
     logging.info("API 啟動")
     yield
     # 關閉
+    mqtt_feed.stop()
     await ble.disconnect()
     logging.info("API 關閉")
 
@@ -178,11 +208,31 @@ async def api_packets(limit: int = 50):
     return {"packets": state.packet_log[-limit:]}
 
 
+# ===== MQTT 遙測 (sensor/nicelogger) =====
+@app.get("/api/mqtt/status")
+async def api_mqtt_status():
+    """MQTT 訂閱狀態"""
+    return mqtt_feed.status()
+
+
+@app.get("/api/mqtt/records")
+async def api_mqtt_records(limit: int = 200):
+    """MQTT 遙測紀錄 (由舊到新) + 各裝置最新值"""
+    return {
+        "records": mqtt_feed.history(limit),
+        "latest": mqtt_feed.latest(),
+        "status": mqtt_feed.status(),
+    }
+
+
 @app.get("/api/config")
 async def api_get_config():
     await ble.get_config()
-    await asyncio.sleep(0.5)
-    return {"config": state.config.__dict__ if state.config else None}
+    await asyncio.sleep(1.5)  # 等設備回 notify
+    cfg = state.config
+    if cfg is None:
+        return {"config": None, "note": "設備尚未回傳設定 (可能需要 1-2 秒)"}
+    return {"config": cfg.__dict__}
 
 
 @app.post("/api/config")
@@ -210,6 +260,15 @@ async def api_set_config(req: SetConfigRequest):
 @app.post("/api/log/start")
 async def api_log_start():
     return {"ok": await ble.start_log()}
+
+
+@app.post("/api/log/probe")
+async def api_log_probe():
+    """路徑 C: 依序試 5 種 Start/Stop payload, 看哪個讓設備回 RX"""
+    if not state.connected:
+        raise HTTPException(400, "尚未連線")
+    results = await ble.probe_start_payload(delay=2.0)
+    return {"results": results, "summary": state.probe_summary}
 
 
 @app.post("/api/log/stop")

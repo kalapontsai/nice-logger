@@ -8,3 +8,6 @@ pydantic>=2.0
 bleak>=0.21
 dbus-fast>=1.0
 pyqt6>=6.6
+
+# MQTT 遙測訂閱 (sensor/nicelogger) — Web UI 顯示各 logger 即時值
+paho-mqtt>=2.1
