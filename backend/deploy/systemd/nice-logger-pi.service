@@ -1,0 +1,19 @@
+[Unit]
+Description=Nice Logger 88361 - BLE bridge to Web UI (FastAPI)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=kali
+WorkingDirectory=/home/kali/nice-logger-pi
+Environment=PATH=/home/kali/nice-logger-pi/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/home/kali/nice-logger-pi/.venv/bin/python -m uvicorn nice_logger.api:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nice Logger 88361 — 歷史記錄</title>
+<link rel="stylesheet" href="style.css">
+<script src="chart.umd.min.js"></script>
+<script src="chartjs-adapter-date-fns.bundle.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <h1>Nice Logger 88361 — 歷史記錄</h1>
+  <p class="sub">
+    資料來源：<b>MySQL</b> <code>mqtt_store.mqtt_messages</code>（頁面經
+    <code>/nicelogger-history/api/records.php</code> 直接查資料庫；資料由 Windows 端
+    <code>mqtt-worker</code> 落地 MQTT <code>sensor/nicelogger/*</code>）。
+    上方卡片顯示兩個紀錄器的即時值，每 15 秒自動更新。
+  </p>
+
+  <div class="card">
+    <div class="cardhead">
+      <h2>即時記錄（兩個紀錄器）</h2>
+      <div class="status"><span class="dot" id="dot"></span><span id="stat">載入中</span></div>
+    </div>
+    <div class="recorders" id="recorders"></div>
+    <div class="cardfoot">
+      來源 MySQL ·
+      <span id="devcount">--</span> 台紀錄器 ·
+      資料 <span id="count">0</span> 筆 ·
+      視窗 <span id="span">0 min</span> ·
+      每 <span id="pollsec">15</span> 秒自動更新
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>溫度趨勢 (°C)</h2>
+    <div class="chartbox"><canvas id="tempChart"></canvas></div>
+  </div>
+
+  <div class="card">
+    <h2>電池電量 (%)</h2>
+    <div class="chartbox"><canvas id="batteryChart"></canvas></div>
+  </div>
+
+  <p class="note">
+    資料視窗 3 小時，保留於 MySQL 72 小時後由 worker 自動清除。
+    每次輪詢都重新載入整個視窗，不會重複累積同一批資料。
+  </p>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,109 +1,127 @@
-# Nice Logger 88361 — PC 控制程式 (Raspberry Pi 4)
+# nice-logger-pi-mqtt
 
-AZ Instrument 88361 藍芽雙溫度記錄器的 PC 控制程式，目標部署平台 **Raspberry Pi 4 + Raspberry Pi OS Lite 64-bit**。
+AZ Instrument **88361 Nice Logger** 的 Raspberry Pi 端完整實作：
+BLE 廣播閘道器 → MQTT → MySQL 遙測管線、FastAPI 即時控制面板，
+以及 `/nicelogger-history/` 歷史查詢頁（MySQL 直讀）。
 
-## 架構
+![nicelogger-history webui](docs/nicelogger-history-webui.jpeg)
+
+## 系統架構
 
 ```
-┌─────────────────────────────────────────────────┐
-│ Raspberry Pi 4 (Raspberry Pi OS Lite 64-bit)    │
-│   ├─ bluez 5.x (BLE stack)                       │
-│   ├─ Python 3.11+ venv                           │
-│   │   ├─ FastAPI (HTTP + WebSocket server)       │
-│   │   ├─ bleak (BLE client)                      │
-│   │   └─ nice_logger/                            │
-│   │       ├─ ble_client.py   ← BLE 通訊核心       │
-│   │       ├─ api.py          ← REST + WS API     │
-│   │       └─ static/index.html ← 網頁 UI         │
-│   └─ systemd / OpenClaw exec 自動啟動            │
-└─────────────────────────────────────────────────┘
-          ↑ HTTP/WS (SSH LocalForward 8000)
-          │
-   [瀏覽器] http://localhost:8000
+88361 logger_01 / logger_02（BLE 廣播）
+        │  Pi 4：backend/nicelogger_gateway.py（systemd 常駐）
+        ▼
+MQTT broker  mqtt-mosquitto :1883        （Windows Docker）
+        ├──▶ Pi FastAPI：backend/nice_logger/   → http://<pi>:8000/   即時控制面板
+        └──▶ mqtt-worker（Windows）              → MySQL mqtt_store.mqtt_messages
+                                                        │
+                                                        ▼
+                              frontend/api/records.php（MySQL 直讀端點）
+                                                        │
+                                                        ▼
+                              http://127.0.0.1/nicelogger-history/   歷史頁
 ```
 
-## 反向工程背景
+## Repo 結構
 
-本程式來自 [Nice Logger Android App (v1.0.025)](https://apkpure.com/) 的反向工程：
+| 路徑 | 內容 |
+|---|---|
+| `backend/nicelogger_gateway.py` | BLE 廣播 → MQTT 發布器（Pi 上常駐，systemd `nicelogger_gateway.service`） |
+| `backend/nice_logger/` | FastAPI 面板：`ble_client.py`（BLE 控制）、`mqtt_feed.py`（MQTT 訂閱）、`api.py`、`static/` |
+| `backend/deploy/systemd/` | 兩個 systemd unit 檔 |
+| `frontend/` | 歷史頁靜態檔（`index.html` / `app.js` / `style.css`）＋ `api/records.php` |
+| `docs/protocol/` | 88361 BLE protocol 完整筆記（`SKILL.md` ＋ `references/`） |
+| `docs/nicelogger-history-webui.jpeg` | 歷史頁畫面 |
 
-- **BLE Service UUID**：`0000fff0-...`
-- **Write (App→Device)**：`0000fff1-...`
-- **Read/Notify (Device→App)**：`0000fff2-...`
-- **App 結構**：Unity 6 + IL2CPP + Innomind (台灣) + Etek 第三方 BLE SDK (深圳)
-- **完整逆向分析**：`projects/nice-logger-reverse/` 下的 `REVERSE-REPORT.md` 與 `PROTOCOL-SPEC.md`
+## 部署對照
 
-## 快速啟動
+| Repo 路徑 | 部署位置 |
+|---|---|
+| `backend/nicelogger_gateway.py`、`backend/nice_logger/` | Pi：`/home/kali/nice-logger-pi/` |
+| `backend/deploy/systemd/*.service` | Pi：`/etc/systemd/system/` |
+| `frontend/*`（含 `api/`） | Windows：`D:\docker\apache\html\nicelogger-history\`（Apache docroot） |
+| MySQL 設定 | Apache 容器內 `html/mqtt/config.php`（**不入 git**，以 `DB_HOST` / `DB_NAME` / `DB_USER` / `DB_PASS` 注入） |
 
-### 在 Pi 4 上（部署）
+`frontend/` 與伺服器上的目錄結構一致，可整包覆蓋；`backend/` 對應 Pi 上 `/home/kali/nice-logger-pi/`。
+
+## 快速開始（Pi 4）
 
 ```bash
-sudo apt install -y bluez python3-pip python3-venv
-cd ~/nice-logger
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-python -m nice_logger.api
-# 開瀏覽器 (Pi 4 本機或 SSH tunnel): http://localhost:8000
+# 1. 程式
+rsync -a backend/nicelogger_gateway.py backend/nice_logger/ kali@<pi>:/home/kali/nice-logger-pi/
+
+# 2. 相依套件（兩套 venv：閘道器用 nicelogger_env，面板用 .venv）
+ssh kali@<pi> '/home/kali/nice-logger-pi/nicelogger_env/bin/pip install -r backend/requirements.txt'
+
+# 3. systemd unit
+cp backend/deploy/systemd/*.service /etc/systemd/system/ && systemctl daemon-reload \
+  && systemctl enable --now nicelogger_gateway.service nice-logger-pi.service
 ```
 
-### 在開發機 (Windows / macOS / Linux)
+閘道器的 MQTT 目標寫在 `backend/nicelogger_gateway.py` 開頭（`MQTT_BROKER` / `MQTT_PORT` /
+`MQTT_TOPIC_PREFIX` / `REPORT_INTERVAL`）。
 
-```bash
-git clone https://github.com/kalapontsai/nice-logger-Pi.git
-cd nice-logger-Pi
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-python -m nice_logger.api
+## API
+
+### 歷史頁（Apache，同源）
+
+`GET /nicelogger-history/api/records.php`
+
+```json
+{
+  "samples": [ { "device_id": "logger_01", "temperature_c": 26.5, "battery_pct": 100,
+                "rssi": -83, "log_count": 3, "received_ms": 1793169124000, "topic": "..." } ],
+  "latest":  { "logger_01": { ... }, "logger_02": { ... } },
+  "updated_ms": 1793169124000,
+  "stale": false, "broker_connected": true,
+  "count": 228, "window_minutes": 180, "source": "mysql"
+}
 ```
 
-## 網頁 UI 功能
+- `samples`：視窗內（預設 180 分鐘）所有紀錄，給趨勢圖用。
+- `latest`：每台紀錄器最新一筆，**不受視窗限制**；上游斷線時頁面仍顯示最後已知值＋過期標記。
+- 設定來源：`NICELOGGER_CONFIG` → `<apache html>/mqtt/config.php` → 同目錄 `config.php`（見 `frontend/api/config.example.php`）。
+- 可調參數：`NICELOGGER_API_WINDOW_MINUTES`、`NICELOGGER_API_MAX_SAMPLES`、`NICELOGGER_API_LATEST_SCAN`。
 
-- **📡 設備掃描**：列出附近 BLE 設備（含 RSSI）
-- **🌡️ 即時溫度**：T1 環境 + T2 外接測棒
-- **📈 MQTT 遙測**：訂閱 `sensor/nicelogger/#`，顯示各 logger 的溫度 / 電量 / RSSI / 記錄點數 + 溫度趨勢圖
-- **⚙️ 設定面板**：設備名稱 / 密碼 / 取樣率 / 啟動延遲 / 警報閾值
-- **▶ 開始 / ⏹ 停止 / 📥 下載**：記錄控制
-- **📋 封包記錄**：TX/RX hex 即時顯示（debug opcode 用）
+### Pi 面板（FastAPI，:8000）
 
-## MQTT 遙測管線
+| Endpoint | 說明 |
+|---|---|
+| `GET /api/health` | 服務健康檢查 |
+| `GET /api/live` | BLE 即時值（依實作狀態） |
+| `GET /api/packets` | 原始 FFF2 封包紀錄 |
+| `GET /api/mqtt/status` | MQTT 訂閱狀態 |
+| `GET /api/mqtt/records?limit=N` | MQTT 遙測紀錄 |
+| `WS /ws` | 前端即時推送 |
 
-Pi 上的 `nicelogger_gateway.py` 掃 BLE 廣播 → 解析 → 發佈到 MQTT；
-本專案的 `nice_logger/mqtt_feed.py` 訂閱同一主題，把資料送進網頁 UI。
+## Protocol
 
-```
-88361 廣播 ──▶ nicelogger_gateway.py ──▶ MQTT broker
-                                          sensor/nicelogger/<device_id>
-                                                   │
-                                                   ▼
-                                   nice_logger/mqtt_feed.py
-                                          │            │
-                            /api/mqtt/records      WebSocket "mqtt"
-                                          ▼            ▼
-                                        網頁 MQTT 面板（卡片 + 折線圖）
-```
+完整筆記在 [`docs/protocol/`](docs/protocol/)：
 
-- Broker 位址預設 `10.35.32.11:1883`，可用環境變數覆寫：
-  `NICELOGGER_MQTT_BROKER` / `NICELOGGER_MQTT_PORT` / `NICELOGGER_MQTT_TOPIC` / `NICELOGGER_MQTT_HISTORY`
-- 端點：`GET /api/mqtt/status`（連線狀態）、`GET /api/mqtt/records?limit=N`（歷史 + 各裝置最新值）
-- 歷史快取存在記憶體（預設 500 筆），重啟即清空；需要長期留存請讓
-  Windows 端的 `mqtt-worker` 一併訂閱 `sensor/nicelogger/*` 落地 MySQL。
-- 網頁 UI 以 `API_BASE` 自動偵測掛載前綴，根目錄（`http://<pi>:8000/`）與
-  反向代理子路徑（`http://<host>/nicelogger/`）都能正常運作。
+- `SKILL.md` — BLE 服務/characteristic、wire format、opcode 表、notify 欄位索引、部署拓撲、已知坑。
+- `references/recorder-config-protocol.md` — `0x53` 寫入 / `0x73` 讀回的配置協定。
+- `references/configure-read-path.md` — 查詢路徑的靜態分析與欄位順序。
+- `references/deployment-topology-and-url-mapping.md` — URL → 實際後端對照。
+- `references/telemetry-pipeline-stall-triage.md` — publisher / broker / subscriber / MySQL 分層排查。
+- `references/multi-device-passive-monitoring.md` — 多台紀錄器被動監聽注意事項。
+- `references/rea-provider-setup-and-findings.md` — REA 反混淆流程與已驗證結果。
 
-## BLE 編碼輔助
+## 已知坑（實測）
 
-`nice_logger/ble_client.py` 內含從 PDF 規格書 + dump.cs 推導的編碼函式：
-
-- `encode_temp_01c(celsius)`：溫度 0.1°C 精度 → 2 bytes little-endian signed
-- `encode_interval_seconds(s)`：取樣率 10 秒增量 → 1 byte index
-- `encode_start_delay_minutes(m)`：啟動延遲 10 分鐘增量 → 1 byte
-- `encode_alarm_delay_minutes(m)`：警報延遲 5 分鐘增量 → 1 byte
-- `encode_password(pwd)`：0~9999 密碼 → 2 bytes
-- `encode_device_name(name)`：最多 7 字 UTF-8
-
-## 注意事項
-
-⚠️ **`Cmd` enum 的 opcode 數值是推測**，必須動態驗證後才能真正控制 88361。驗證流程見父目錄 `projects/nice-logger-reverse/stage4-protocol-spec/pc-ble-setup.md`。
+- **閘道器只連一次 broker**：舊版 `connect()` 失敗就吞掉例外、永不重連，之後 `publish()` 全部被丟棄，
+  但 journal 仍每分鐘印「-> MQTT」。已改為 `connect_async()` 背景重連＋檢查 `publish()` rc＋watchdog；
+  判斷依據請看 log 的「已送出／等待重連／發送失敗」標記與 `ss -tnp | grep 1883`。
+- **Pi 沒有 RTC**：重開機後系統時鐘會慢數天（UDP/123 被擋），journal 時間戳會錯；
+  需要 NTS over TCP/4460 校正。
+- **Pi 的區網 IP 是 DHCP 會變**：不要把區網 IP 寫死在小說或指令裡，用 Tailscale 位址。
+- **發布間隔 60 秒**：`REPORT_INTERVAL = 60`，短訂閱窗（<90 秒）看不到資料是正常現象，不是故障。
+- **broker 日誌大量 `auto-XXXX` 連線**是容器 healthcheck，不是異常。
+- **MySQL `mqtt_user` 沒有 UPDATE 權限**：設定頁要改 topics 得用 MySQL root。
+- **Apache 反代已停用**：`/nicelogger/` 的反向代理在 2026-10-28 關閉，歷史頁 `/nicelogger-history/`
+  本來就是靜態目錄、不受影響。
 
 ## 授權
 
-私有研究專案，未經 AZ Instrument Corp. 授權。
+- 本 repo 程式碼：沿用原專案授權。
+- `frontend/chart.umd.min.js`、`frontend/chartjs-adapter-date-fns.bundle.js`：Chart.js（MIT）。

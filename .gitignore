@@ -42,6 +42,9 @@ secrets/
 .coverage
 htmlcov/
 
+# PHP
+frontend/api/config.php
+
 # BLE capture / 動態測試輸出
 /captures/
 /pcaps/

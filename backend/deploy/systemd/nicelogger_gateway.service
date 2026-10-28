@@ -1,0 +1,23 @@
+[Unit]
+Description=NiceLogger88361_gateway
+After=network.target
+
+[Service]
+# 程式執行的工作目錄（您的專案資料夾）
+WorkingDirectory=/home/kali/nice-logger-pi
+
+# 直接使用虛擬環境中的 python 執行檔路徑，後面加上腳本路徑
+ExecStart=/home/kali/nice-logger-pi/nicelogger_env/bin/python /home/kali/nice-logger-pi/nicelogger_gateway.py
+
+# 讓程式遭遇錯誤崩潰時會自動重啟
+Restart=always
+RestartSec=5
+
+# 執行此程式的系統用戶（建議用 pi 或您的自訂帳號，避免用 root）
+User=kali
+
+# 確保 Python 的 print 訊息能即時寫入 Log
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

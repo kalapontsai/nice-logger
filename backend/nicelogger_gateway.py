@@ -22,6 +22,28 @@ REPORT_INTERVAL = 60.0
 last_report_time = {}
 
 
+def mqtt_connected(client) -> bool:
+    """paho 1.x / 2.x 通用：判斷目前是否真的連著 broker。"""
+    try:
+        return bool(client.is_connected())
+    except Exception:
+        return False
+
+
+async def mqtt_watchdog(client):
+    """每 10 秒回報一次 MQTT 連線狀態變化，避免「看起來有在跑但其實沒連上」。"""
+    last = None
+    while True:
+        now = mqtt_connected(client)
+        if now != last:
+            if now:
+                print(f"[+] MQTT 已連線: {MQTT_BROKER}:{MQTT_PORT}")
+            else:
+                print("[!] MQTT 未連線，等待自動重連…")
+            last = now
+        await asyncio.sleep(10)
+
+
 def parse_nicelog_adv(data: bytes):
     if len(data) < 24:
         return None
@@ -104,23 +126,37 @@ def on_advertisement(
     }
 
     topic = f"{MQTT_TOPIC_PREFIX}/{device_id}"
-    mqtt_client.publish(topic, json.dumps(payload))
+    rc = mqtt_client.publish(topic, json.dumps(payload))
+
+    # publish() 不會丟例外：未連線時只是回傳錯誤碼，訊息直接被丟掉。
+    # 舊版這裡照樣印「-> MQTT」，看起來像成功，實際上資料全留在線上（本次故障根因）。
+    if rc.rc != mqtt.MQTT_ERR_SUCCESS:
+        state = f"發送失敗（rc={rc.rc}）"
+    elif not mqtt_connected(mqtt_client):
+        state = "等待重連（尚未送出）"
+    else:
+        state = "已送出"
 
     print(
         f"[{device_id} | {mac}] {parsed['temperature_c']}°C | "
-        f"電量: {parsed['battery_pct']}% | 筆數: {parsed['log_count']} -> MQTT ({topic})"
+        f"電量: {parsed['battery_pct']}% | 筆數: {parsed['log_count']} -> MQTT ({topic}) {state}"
     )
 
 
 async def main():
     # 連接 MQTT Broker
+    # 開機時 Wi-Fi 可能還沒連上。舊版只 connect() 一次，失敗就 catch 掉不再重試，
+    # 結果 journal 每分鐘照印「-> MQTT」但 broker 一筆都收不到。
+    # 改用 connect_async() + loop_start()：paho 會在背景持續重連。
     client = mqtt.Client()
+    client.reconnect_delay_set(min_delay=1, max_delay=30)
+    client.max_queued_messages_set(1000)
     try:
-        client.connect(MQTT_BROKER, MQTT_PORT, 60)
+        client.connect_async(MQTT_BROKER, MQTT_PORT, 60)
         client.loop_start()
-        print(f"[+] 已連接 MQTT Broker: {MQTT_BROKER}:{MQTT_PORT}")
+        print(f"[+] MQTT 連線程序已啟動: {MQTT_BROKER}:{MQTT_PORT}（尚未連上會自動重試）")
     except Exception as e:
-        print(f"[!] MQTT 連線失敗: {e} (將僅在終端機顯示)")
+        print(f"[!] MQTT 連線啟動失敗: {e}（將持續重試）")
 
     # 註冊 BleakScanner 回調
     scanner = BleakScanner(
@@ -131,10 +167,13 @@ async def main():
     await scanner.start()
     print("[+] NiceLogger 廣播閘道器啟動中，按 Ctrl+C 結束...\n" + "-" * 70)
 
+    watchdog = asyncio.create_task(mqtt_watchdog(client))
+
     try:
         while True:
             await asyncio.sleep(1)
     finally:
+        watchdog.cancel()
         await scanner.stop()
         client.loop_stop()
         client.disconnect()
